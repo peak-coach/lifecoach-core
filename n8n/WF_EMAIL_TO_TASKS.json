@@ -1,0 +1,291 @@
+{
+  "name": "Email → Tasks (Peak Coach)",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "trigger",
+      "name": "Alle 15 Minuten",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "mailbox": "INBOX",
+        "returnAll": false,
+        "limit": 10,
+        "options": {
+          "onlyUnseen": true
+        }
+      },
+      "id": "imap-read",
+      "name": "Neue E-Mails lesen (IMAP)",
+      "type": "n8n-nodes-base.imap",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "credentials": {
+        "imap": {
+          "id": "IMAP_CREDENTIAL_ID",
+          "name": "Dogado Mail"
+        }
+      },
+      "notes": "⚠️ Konfiguriere deine IMAP Credentials:\n- Host: mail.dein-provider.de\n- Port: 993\n- User: deine@email.de\n- Password: ***"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "filter-important",
+              "leftValue": "={{ $json.subject }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-emails",
+      "name": "Filter: Nur relevante",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.3
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Du bist ein Assistent der E-Mails analysiert und Action Items extrahiert.\n\nAnalysiere diese E-Mail und antworte NUR mit JSON:\n\n---\nVon: {{ $json.from }}\nBetreff: {{ $json.subject }}\nDatum: {{ $json.date }}\n\nInhalt:\n{{ $json.text ? $json.text.substring(0, 2000) : 'Kein Text' }}\n---\n\nAntworte mit diesem JSON Format (NUR JSON, keine Erklärung):\n{\n  \"has_action\": true/false,\n  \"tasks\": [\n    {\n      \"title\": \"Konkrete Aufgabe\",\n      \"priority\": \"high\" | \"medium\" | \"low\",\n      \"deadline\": \"YYYY-MM-DD\" oder null,\n      \"context\": \"Kurze Info zur E-Mail\"\n    }\n  ],\n  \"summary\": \"1-Satz Zusammenfassung der E-Mail\"\n}",
+              "role": "user"
+            }
+          ]
+        }
+      },
+      "id": "analyze-email",
+      "name": "AI: E-Mail analysieren",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [900, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI Response\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  try {\n    let content = item.json.message?.content || item.json.text || '';\n    \n    // Handle markdown code blocks\n    if (content.includes('```')) {\n      content = content.replace(/```json?\\n?/g, '').replace(/```/g, '').trim();\n    }\n    \n    const parsed = JSON.parse(content);\n    \n    if (parsed.has_action && parsed.tasks && parsed.tasks.length > 0) {\n      for (const task of parsed.tasks) {\n        results.push({\n          json: {\n            title: task.title,\n            priority: task.priority || 'medium',\n            deadline: task.deadline,\n            context: task.context,\n            summary: parsed.summary,\n            source: 'email',\n            email_from: item.json.from || items[0]?.json?.from,\n            email_subject: item.json.subject || items[0]?.json?.subject\n          }\n        });\n      }\n    }\n  } catch (e) {\n    // Skip if parsing fails\n    console.log('Parse error:', e.message);\n  }\n}\n\nreturn results.length > 0 ? results : [{ json: { skip: true } }];"
+      },
+      "id": "parse-response",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-task",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-tasks",
+      "name": "Filter: Nur Tasks",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list",
+          "cachedResultName": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tasks",
+          "mode": "list",
+          "cachedResultName": "tasks"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $env.PEAK_COACH_USER_ID }}",
+            "title": "={{ $json.title }}",
+            "description": "=📧 Aus E-Mail: {{ $json.email_subject }}\n\n{{ $json.context || '' }}",
+            "priority": "={{ $json.priority }}",
+            "scheduled_date": "={{ $json.deadline || $now.format('YYYY-MM-DD') }}",
+            "status": "pending",
+            "source": "email"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "insert-task",
+      "name": "Task in Supabase",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 300],
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase Postgres"
+        }
+      },
+      "notes": "⚠️ Setze PEAK_COACH_USER_ID als Environment Variable mit deiner User-ID aus Supabase"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"text\": \"📧 *Neuer Task aus E-Mail*\\n\\n📋 {{ $json.title }}\\n📅 {{ $json.deadline || 'Heute' }}\\n{{ $json.priority === 'high' ? '🔴' : $json.priority === 'low' ? '🟢' : '🟡' }} Priorität: {{ $json.priority }}\\n\\n_Von: {{ $json.email_from }}_\",\n  \"parse_mode\": \"Markdown\"\n}",
+        "options": {}
+      },
+      "id": "telegram-notify",
+      "name": "Telegram Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 300],
+      "notes": "⚠️ Setze Environment Variables:\n- TELEGRAM_BOT_TOKEN\n- TELEGRAM_CHAT_ID (deine Chat-ID)"
+    }
+  ],
+  "connections": {
+    "Alle 15 Minuten": {
+      "main": [
+        [
+          {
+            "node": "Neue E-Mails lesen (IMAP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Neue E-Mails lesen (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Filter: Nur relevante",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Nur relevante": {
+      "main": [
+        [
+          {
+            "node": "AI: E-Mail analysieren",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: E-Mail analysieren": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Filter: Nur Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Nur Tasks": {
+      "main": [
+        [
+          {
+            "node": "Task in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Peak Coach"
+    }
+  ],
+  "triggerCount": 1
+}
+

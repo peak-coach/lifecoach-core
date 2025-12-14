@@ -1,0 +1,135 @@
+{
+  "name": "LC-WF2 – Morning Day Plan (Dev)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-manual-trigger",
+      "name": "Start – Manuell",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "LC_TASKS_DB_ID"
+        },
+        "returnAll": true,
+        "filterType": "json",
+        "filterJson": "{\n  \"filter\": {\n    \"property\": \"Status\",\n    \"status\": {\n      \"equals\": \"Heute\"\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "node-notion-load-tasks",
+      "name": "Load LC – Tasks (Heute)",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "",
+          "name": "Notion API (Placeholder)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build /plan/day Request Body\n// Input: Notion Tasks from previous node\n// Output: Single PlanDayRequestBody object\n// According to docs/api-plan-day.md: { date: string, tasks: [{ id, title, priority?, estimatedMinutes? }] }\n\nconst today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD\n\n// Use $input.all() instead of items (n8n Code Node best practice)\nconst allItems = $input.all();\n\nconst tasks = allItems.map(item => {\n  const props = item.json.properties || {};\n  \n  // Extract task ID (Notion page ID)\n  const id = item.json.id || '';\n  \n  // Extract title from Notion title property\n  // Notion stores titles as an array of rich text objects\n  let title = '';\n  if (props.Name && props.Name.title && props.Name.title.length > 0) {\n    title = props.Name.title.map(t => t.plain_text || '').join('');\n  } else if (props.Title && props.Title.title && props.Title.title.length > 0) {\n    title = props.Title.title.map(t => t.plain_text || '').join('');\n  }\n  \n  // Extract priority from Select property (if exists)\n  // Map to lowercase: low, medium, high (as per api-plan-day.md)\n  let priority = undefined;\n  if (props.Priority && props.Priority.select && props.Priority.select.name) {\n    const prio = props.Priority.select.name.toLowerCase();\n    if (['high', 'medium', 'low'].includes(prio)) {\n      priority = prio;\n    }\n  }\n  \n  // Extract estimatedMinutes from Number property (if exists)\n  let estimatedMinutes = undefined;\n  if (props.EstimatedMinutes && typeof props.EstimatedMinutes.number === 'number') {\n    estimatedMinutes = props.EstimatedMinutes.number;\n  }\n  \n  return {\n    id,\n    title,\n    ...(priority && { priority }),\n    ...(estimatedMinutes && { estimatedMinutes })\n  };\n}).filter(task => task.id && task.title); // Only include tasks with valid id and title\n\n// Build request body according to PlanDayRequestBody schema from api-plan-day.md\nconst requestBody = {\n  date: today,\n  tasks: tasks\n};\n\n// Return array format required by n8n Code Node\nreturn [{ json: requestBody }];"
+      },
+      "id": "node-function-build-request",
+      "name": "Build /plan/day Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/plan/day",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "node-http-call-api",
+      "name": "Call LifeCoach /plan/day",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        900,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Start – Manuell": {
+      "main": [
+        [
+          {
+            "node": "Load LC – Tasks (Heute)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load LC – Tasks (Heute)": {
+      "main": [
+        [
+          {
+            "node": "Build /plan/day Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build /plan/day Request": {
+      "main": [
+        [
+          {
+            "node": "Call LifeCoach /plan/day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": ""
+  },
+  "id": "lc-wf2-morning-plan-dev",
+  "tags": [
+    {
+      "name": "LifeCoach",
+      "createdAt": "2025-11-29T00:00:00.000Z",
+      "updatedAt": "2025-11-29T00:00:00.000Z"
+    }
+  ]
+}
+

@@ -1,0 +1,1440 @@
+{
+  "name": "WF1 MEET-3",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf1/ingest",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "4b6ee1e9-0e30-4062-a4e5-5beec3f4c079",
+      "name": "Webhook Ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -7488,
+        -32
+      ],
+      "webhookId": "wf1-ingest",
+      "notes": "⚠️ rawBody: true is critical for HMAC validation"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Extract headers and body for HMAC validation\nconst headers = $json.headers || {};\nconst body = $json.body || $json;\nconst rawBody = $json.rawBody || JSON.stringify(body);\n\nconst hmacSignature = headers['x-signature-256'] || headers['X-Signature-256'] || headers['x-hmac-signature'] || headers['X-HMAC-Signature'];\nconst timestamp = headers['x-timestamp'] || headers['X-Timestamp'];\nconst nonce = headers['x-nonce'] || headers['X-Nonce'];\n\n// Validation errors\nif (!hmacSignature) {\n  return {\n    json: {\n      isError: true,\n      error: 'UNAUTHORIZED',\n      message: 'Missing X-Signature-256 header',\n      statusCode: 401,\n      body,\n      headers\n    }\n  };\n}\n\nif (!timestamp) {\n  return {\n    json: {\n      isError: true,\n      error: 'BAD_REQUEST',\n      message: 'Missing X-Timestamp header',\n      statusCode: 400,\n      body,\n      headers\n    }\n  };\n}\n\nif (!nonce) {\n  return {\n    json: {\n      isError: true,\n      error: 'BAD_REQUEST',\n      message: 'Missing X-Nonce header (required for replay protection)',\n      statusCode: 400,\n      body,\n      headers\n    }\n  };\n}\n\nconst receivedHmac = hmacSignature.replace('sha256=', '').toLowerCase();\n\nreturn {\n  json: {\n    isError: false,\n    body,\n    headers,\n    rawBody,\n    receivedHmac,\n    timestamp: parseInt(timestamp),\n    nonce\n  }\n};"
+      },
+      "id": "7ee440df-2787-45b3-b1ff-e6a2cd6a7d99",
+      "name": "Extract Headers & Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6864,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isError }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "9e077318-19cd-470f-bcf8-a2484706f430",
+      "name": "Has Validation Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -6672,
+        144
+      ],
+      "notes": "Check if extract-headers found validation errors"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// Get data from current node (from Debug HMAC_SECRETS or Extract Headers & Body)\nlet rawBody = $json.rawBody || '';\nlet headers = $json.headers || {};\nlet receivedHmac = $json.receivedHmac || '';\n\n// Fallback: Try to get data from Extract Headers & Body node directly\nif (!receivedHmac || !rawBody) {\n  const extractNode = $node['Extract Headers & Body'];\n  if (extractNode && extractNode.json) {\n    const extractData = Array.isArray(extractNode.json) ? extractNode.json[0] : extractNode.json;\n    rawBody = rawBody || extractData.rawBody || '';\n    headers = headers || extractData.headers || {};\n    receivedHmac = receivedHmac || extractData.receivedHmac || '';\n  }\n}\n\n// Use receivedHmac from Extract Headers & Body node if available\n// Otherwise try to extract from headers as fallback\nlet expectedSignature = receivedHmac || '';\n\n// Fallback: Get expected signature from header if receivedHmac not available\nif (!expectedSignature) {\n  const signatureHeader = headers['x-signature-256'] || \n                         headers['X-Signature-256'] || \n                         headers['x-signature'] || \n                         headers['X-Signature'] || \n                         '';\n  // Remove 'sha256=' prefix if present\n  expectedSignature = signatureHeader.replace('sha256=', '').toLowerCase();\n} else {\n  // Ensure receivedHmac is already lowercase (from Extract Headers & Body)\n  expectedSignature = expectedSignature.toLowerCase();\n}\n\n// Get secret from environment variable (set by Debug HMAC_SECRETS node)\nconst secret = $json.hmac_secret || $env.HMAC_SECRET;\n\nif (!secret) {\n  throw new Error('HMAC_SECRET environment variable not set');\n}\n\n// Calculate HMAC-SHA256\nconst hmac = crypto\n  .createHmac('sha256', secret)\n  .update(rawBody, 'utf8')\n  .digest('hex');\n\nconst calculatedSignature = hmac.toLowerCase();\n\n// Return result with clear flags\nreturn {\n  json: {\n    ...$json,\n    rawBody: rawBody,\n    headers: headers,\n    calculatedSignature: calculatedSignature,\n    expectedSignature: expectedSignature,\n    hmacValid: (!!expectedSignature && expectedSignature !== '' && expectedSignature !== 'dummy' && calculatedSignature === expectedSignature),\n    // Keep hash for backward compatibility\n    hash: calculatedSignature\n  }\n};"
+      },
+      "id": "55df9e09-2f64-47f7-a481-122d0a791757",
+      "name": "Compute HMAC (Code)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6480,
+        144
+      ],
+      "notes": "v1.6.2: Syntax fixed, uses hmacValid flag. Secret from $env.HMAC_SECRET"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.hmacValid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "cdd19e3e-df0f-4b50-aa1e-867e45a71606",
+      "name": "HMAC Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -6304,
+        144
+      ],
+      "notes": "v1.6.2: Now checks $json.hmacValid flag directly (clearer logic)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const timestamp = $json.timestamp;\nconst now = Math.floor(Date.now() / 1000);\nconst diffMinutes = Math.abs(now - timestamp) / 60;\n\nif (diffMinutes > 5) {\n  return {\n    json: {\n      isError: true,\n      error: 'UNAUTHORIZED',\n      message: `Request timestamp too old or in future (±5 minutes required, got ${diffMinutes.toFixed(1)} min diff)`,\n      statusCode: 401,\n      body: $json.body,\n      headers: $json.headers\n    }\n  };\n}\n\nreturn {\n  json: {\n    ...$json,\n    isError: false,\n    timestampValid: true\n  }\n};"
+      },
+      "id": "b6e07a09-75a3-463d-a1b6-04b1fc81228b",
+      "name": "Check Timestamp",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6160,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isError }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "35398a44-1702-4413-a236-40afcddfa311",
+      "name": "Timestamp Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -6000,
+        16
+      ],
+      "notes": "Check if timestamp validation failed"
+    },
+    {
+      "parameters": {
+        "path": "=={{ `Meetings/_nonce-cache/${$json.nonce}.json` }}"
+      },
+      "id": "2a8290dd-72fd-4268-b4a0-067bcdca1585",
+      "name": "Check Nonce Exists",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -5824,
+        16
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "⚠️ Requires n8n-nodes-webdav community node"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.exists === true }}"
+            }
+          ]
+        }
+      },
+      "id": "64986e2c-0ceb-4413-bdd0-1c8aedc3daeb",
+      "name": "Nonce New?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -5488,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "path": "=={{ `Meetings/_nonce-cache/${$json.nonce}.json` }}",
+        "dataSource": "text",
+        "fileContent": "=={{ JSON.stringify({ nonce: $json.nonce, timestamp: $json.timestamp }, null, 2) }}"
+      },
+      "id": "74cc6d1d-5282-42dc-a5a7-12abe7a7d4c5",
+      "name": "Create Nonce File",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -5280,
+        -64
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Get body and binary data - try from current input first, then from Extract Headers & Body node\nlet body = $json.body;\nlet binaryData = $binary || {};\n\n// If body is not available in current input, get it from Extract Headers & Body node\nif (!body) {\n  const extractNode = $node[\"Extract Headers & Body\"];\n  if (extractNode && extractNode.json) {\n    const extractData = Array.isArray(extractNode.json) ? extractNode.json[0] : extractNode.json;\n    body = extractData.body || {};\n  }\n}\n\n// Ensure body is at least an empty object\nif (!body) {\n  body = {};\n}\n\nif (!body.meeting) {\n  return {\n    json: {\n      isError: true,\n      error: 'VALIDATION_ERROR',\n      message: 'Missing meeting object in request body',\n      statusCode: 400,\n      body\n    }\n  };\n}\n\nconst meeting = body.meeting;\nif (!meeting.slug) {\n  return {\n    json: {\n      isError: true,\n      error: 'VALIDATION_ERROR',\n      message: 'Missing meeting.slug',\n      statusCode: 400,\n      body\n    }\n  };\n}\n\nif (!meeting.title || !meeting.datetime) {\n  return {\n    json: {\n      isError: true,\n      error: 'VALIDATION_ERROR',\n      message: 'Missing meeting.title or meeting.datetime',\n      statusCode: 400,\n      body\n    }\n  };\n}\n\nlet sourceKey = null;\nif (binaryData.audio) sourceKey = 'audio';\nelse if (binaryData.video) sourceKey = 'video';\nelse if (binaryData.file) sourceKey = 'file';\n\nlet hasFile = false;\nif (sourceKey) {\n  binaryData.audio = binaryData[sourceKey];\n  hasFile = true;\n}\n\nconst audioUrl = body.audioUrl || null;\nconst filePath = body.filePath || null; // WebDAV path from AUTO_TRIGGER\n\n// Accept either binary file, audioUrl (public URL), or filePath (WebDAV path)\nif (!hasFile && !audioUrl && !filePath) {\n  return {\n    json: {\n      isError: true,\n      error: 'VALIDATION_ERROR',\n      message: 'No audio/video file provided (binary, audioUrl, or filePath)',\n      statusCode: 400,\n      body\n    }\n  };\n}\n\nlet fileExt = 'mp3';\nif (hasFile && binaryData.audio) {\n  fileExt = binaryData.audio.fileExtension || binaryData.audio.mimeType?.split('/')[1] || 'mp3';\n} else if (filePath) {\n  // Extract extension from filePath\n  const pathParts = filePath.split('.');\n  if (pathParts.length > 1) {\n    fileExt = pathParts.pop();\n  }\n}\n\nconst basePath = `/Meetings/${meeting.slug}`;\nconst paths = {\n  root: `${basePath}/`,\n  raw: `${basePath}/raw/`,\n  out: `${basePath}/out/`,\n  dlq: `${basePath}/dlq/`,\n  originalFile: `${basePath}/raw/original.${fileExt}`,\n  transcript: `${basePath}/out/transcript.txt`,\n  meta: `${basePath}/out/meta.json`\n};\n\nconst meta = {\n  meeting: {\n    slug: meeting.slug,\n    title: meeting.title,\n    datetime: meeting.datetime,\n    language: meeting.language || 'de',\n    participants: meeting.participants || []\n  },\n  upload: {\n    timestamp: new Date().toISOString(),\n    source: body.source || 'api',\n    fileType: hasFile ? 'audio' : (filePath ? 'webdav' : 'url'),\n    fileExtension: fileExt\n  },\n  stt: {\n    provider: 'deepgram',\n    model: 'nova-2'\n  },\n  paths: paths\n};\n\nreturn {\n  json: {\n    isError: false,\n    meeting,\n    meta,\n    audioUrl,\n    filePath,\n    hasFile,\n    fileExt,\n    paths\n  },\n  binary: binaryData\n};"
+      },
+      "id": "6385e29d-a1b0-44b2-a0c3-47d9c445309b",
+      "name": "Extract & Validate Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5120,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isError }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "8d4563ee-92da-4e00-84cb-34b005b329b4",
+      "name": "Metadata Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -4976,
+        -64
+      ],
+      "notes": "Check if metadata validation failed"
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "path": "={{ $node['Extract & Validate Metadata'].json.paths.root }}"
+      },
+      "id": "78cc5eff-ef2e-43a8-84c9-8886376bfcd9",
+      "name": "Create Meeting Folder",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -4768,
+        -352
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "path": "={{ $node['Extract & Validate Metadata'].json.paths.raw }}"
+      },
+      "id": "b34e0278-277b-4051-9686-5034d0483ad1",
+      "name": "Create /raw/ Folder",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -4768,
+        -144
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "path": "={{ $node['Extract & Validate Metadata'].json.paths.out }}"
+      },
+      "id": "6bdec8b3-4b01-4577-af92-6a713a796cb3",
+      "name": "Create /out/ Folder",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -4768,
+        48
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "path": "={{ $node['Extract & Validate Metadata'].json.paths.dlq }}"
+      },
+      "id": "eb797b80-870b-4448-a226-77dd8b1f2a5e",
+      "name": "Create /dlq/ Folder",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -4768,
+        256
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "f31ecd54-4d50-4800-a24f-79888ebfdbee",
+      "name": "Merge Folder Creation",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        -4496,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "path": "={{ $node['Extract & Validate Metadata'].json.paths.transcript }}"
+      },
+      "id": "a1762ade-6f9a-471f-9719-8ec6fd5b5878",
+      "name": "Check Transcript Exists",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -4304,
+        -64
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "Idempotency: Skip STT if transcript already exists. Gets path from Extract & Validate Metadata."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.data ? false : true }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "dd438db7-e2f7-4625-8f9d-68393c1a2857",
+      "name": "Transcript Missing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -4128,
+        -64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $node['Extract & Validate Metadata'].json.hasFile }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "c27a6c1d-7496-46fe-b8e5-ade9e4e17566",
+      "name": "Has Binary File?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -3904,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "path": "={{ $node['Extract & Validate Metadata'].json.paths.originalFile }}",
+        "binaryPropertyName": "audio"
+      },
+      "id": "b26da675-d514-4ba1-aeee-65b1f55e02aa",
+      "name": "Upload Original File",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -3680,
+        -272
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build STT payload; fall back to Extract & Validate Metadata to avoid data loss through WebDAV nodes\nconst baseNode = $node[\"Extract & Validate Metadata\"];\nconst base = baseNode ? (Array.isArray(baseNode.json) ? baseNode.json[0] : baseNode.json) : {};\n\nconst meta    = $json.meta    || base.meta    || {};\nconst meeting = $json.meeting || base.meeting || {};\nconst paths   = $json.paths   || base.paths   || {};\nconst audioUrl = $json.audioUrl || base.audioUrl || null;\nconst filePath = $json.filePath || base.filePath || null; // WebDAV path from AUTO_TRIGGER\nconst hasFile  = $json.hasFile || false;\n\nconst binaryData = $binary || {};\n\nconst sttConfig   = meta.stt || {};\nconst sttProvider = sttConfig.provider || 'deepgram';\nconst sttModel    = sttConfig.model || 'nova-2';\n\nreturn {\n  json: {\n    meeting,\n    meta,\n    audioUrl,\n    filePath,\n    hasFile,\n    useBinaryMode: hasFile,\n    useUrlMode: !hasFile && (!!audioUrl || !!filePath),\n    sttProvider,\n    sttModel,\n    language: meeting.language || 'de',\n    paths\n  },\n  binary: binaryData\n};"
+      },
+      "id": "6d1565d4-bedd-439e-9fed-f7338cd4894e",
+      "name": "Prepare STT Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3536,
+        -128
+      ],
+      "notes": "Prepares STT request. Preserves binary data for call-deepgram. Now includes filePath for WebDAV download."
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "path": "={{ $node['Extract Headers & Body'].json.body.filePath }}",
+        "binaryPropertyName": "audio"
+      },
+      "id": "d0c7f7e9-4fa7-4c92-9f6f-3b9a8f8b5a61",
+      "name": "Download Audio (for STT)",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -3280,
+        -128
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.deepgram.com/v1/listen?model=' \n    + ($node['Prepare STT Request'].json.sttModel || 'nova-2') \n    + '&language=' + ($node['Prepare STT Request'].json.language || 'de') \n    + '&punctuate=true&utterances=true' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "audio/mp4"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "audio",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "84b61bb0-7488-45d5-96a3-a04f10822148",
+      "name": "Call Deepgram STT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -3000,
+        -128
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OPvhEMvWJK0EsTIB",
+          "name": "Deepgram API"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "STT call with continueOnFail: true. Sends audio as binary with Content-Type: audio/mp4"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error !== undefined || ($json.statusCode && $json.statusCode >= 500) }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "cfc04353-e934-4185-8928-94686f1445b8",
+      "name": "STT HTTP Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -3200,
+        -128
+      ],
+      "notes": "Checks if Deepgram returned HTTP 5xx error (continueOnFail mode)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const sttResponse = $json;\n\nconst extractNode = $node[\"Extract & Validate Metadata\"];\nconst extractJson = extractNode ? extractNode.json : {};\n\nconst meeting = extractJson.meeting || {};\nconst basePaths = extractJson.paths || {};\n\nconst slug = meeting.slug || \"undefined\";\nconst base = basePaths.base || `/Meetings/${slug}`;\n\nconst paths = {\n  base,\n  raw: basePaths.raw || `${base}/raw`,\n  out: basePaths.out || `${base}/out`,\n  dlq: basePaths.dlq || `${base}/dlq`,\n  originalFile: basePaths.originalFile || `${base}/raw/original.bin`,\n  transcript: basePaths.transcript || `${base}/out/transcript.txt`,\n  meta: basePaths.meta || `${base}/out/meta.json`,\n};\n\nconst transcript = sttResponse.results.channels[0].alternatives[0].transcript;\n\nconst models = sttResponse.models || [];\nconst modelInfo = models[0] && models[0].model_info ? models[0].model_info : {};\n\nconst meta = {\n  stt: {\n    provider: \"deepgram\",\n    model: modelInfo.name || \"nova-2\",\n    requestId: sttResponse.metadata.request_id,\n    duration: sttResponse.metadata.duration,\n    sha256: sttResponse.metadata.sha256,\n  },\n  rawStt: sttResponse,\n};\n\nreturn {\n  json: {\n    isError: false,\n    meeting,\n    paths,\n    transcript,\n    transcriptText: transcript,\n    meta,\n    rawStt: sttResponse,\n  },\n};"
+      },
+      "id": "0b7ea4b3-b847-4a4e-b796-6dfb53d8aa3d",
+      "name": "Parse STT Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3008,
+        -128
+      ],
+      "notes": "Parses STT response. Handles HTTP errors from continueOnFail mode."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isError }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "e73ecf69-fae9-4c73-a7fc-e3a956079df4",
+      "name": "STT Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -2832,
+        -128
+      ],
+      "notes": "Check if STT processing failed"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "path": "={{ $json.paths.transcript }}",
+        "dataSource": "text",
+        "fileContent": "={{ $json.transcriptText || $json.transcript }}",
+        "overwrite": true
+      },
+      "id": "4cc52d3a-21fe-4d78-9825-8359c9f52bfd",
+      "name": "Save Transcript",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -2640,
+        -256
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "path": "={{ $node[\"Parse STT Response\"].json.paths.meta }}",
+        "dataSource": "text",
+        "fileContent": "={{ JSON.stringify($node[\"Parse STT Response\"].json.meta, null, 2) }}",
+        "overwrite": true
+      },
+      "id": "aa275ea6-067a-4d47-87f1-b1ffd516d8bb",
+      "name": "Save Meta",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -2640,
+        -16
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "a44ffcfa-1450-4e74-8eaf-e03674870981",
+      "name": "Merge Saves",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        -2368,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Prepare WF2 Data - Get data from Parse STT Response (STT path) or Load Existing Transcript (idempotency path)\nconst parseNode = $node['Parse STT Response'];\nconst loadNode = $node['Load Existing Transcript'];\n\nlet sourceData = null;\n\n// Try Parse STT Response first (STT path)\nif (parseNode && parseNode.json) {\n  sourceData = Array.isArray(parseNode.json) ? parseNode.json[0] : parseNode.json;\n}\n// Fallback to Load Existing Transcript (idempotency path)\nelse if (loadNode && loadNode.json) {\n  sourceData = Array.isArray(loadNode.json) ? loadNode.json[0] : loadNode.json;\n}\n\nif (!sourceData) {\n  return {\n    json: {\n      meeting: {},\n      meta: {},\n      paths: {}\n    }\n  };\n}\n\nreturn {\n  json: {\n    meeting: sourceData.meeting || {},\n    meta: sourceData.meta || {},\n    paths: sourceData.paths || {}\n  }\n};"
+      },
+      "id": "b8f9c3d2-1234-5678-90ab-cdef12345678",
+      "name": "Prepare WF2 Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2288,
+        -160
+      ],
+      "notes": "Prepares data for WF2 from both STT and idempotency paths"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "CHANGE_ME_N8N_URL/webhook/meeting/summarize",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { meeting: $json.meeting, meta: $json.meta, paths: $json.paths } }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "a030ed31-2446-409f-9afd-34577a8efdd0",
+      "name": "Trigger WF2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -2208,
+        -160
+      ],
+      "continueOnFail": true,
+      "notes": "Triggers WF2 with data from current item (works for both STT and idempotency paths)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Immer explizit von Parse STT Response lesen\nconst baseNode = $node['Parse STT Response'];\n\nconst meeting = baseNode.json.meeting || {};\nconst meta    = baseNode.json.meta    || {};\nconst paths   = baseNode.json.paths   || {};\n\nconst isCached = meta.transcript?.provider === 'cached';\n\nreturn {\n  json: {\n    status: 'success',\n    statusCode: 202,\n    meeting: {\n      slug: meeting.slug,\n      title: meeting.title,\n      datetime: meeting.datetime,\n    },\n    files: {\n      transcript: paths.transcript || null,\n      meta:       paths.meta       || null,\n      original:   paths.originalFile || null,\n    },\n    transcript: {\n      cached: !!isCached,\n    },\n  },\n};"
+      },
+      "id": "f1b97ef2-f1aa-42b0-9c8e-bae74ce64622",
+      "name": "Build Success Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2032,
+        -160
+      ],
+      "notes": "Builds success response from current item (works for both paths)"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": "={{$json.statusCode || 202}}"
+        }
+      },
+      "id": "ceaec5f1-e2fc-49e5-af46-85a56306a688",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -1856,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const errorData = $json;\n\n// Use existing statusCode and error info if present (from validation errors)\n// Otherwise default to 500\nconst statusCode = errorData.statusCode || 500;\nconst errorType = errorData.error || 'UNKNOWN_ERROR';\nconst errorMessage = errorData.message || 'Unknown error occurred';\nconst meeting = errorData.body?.meeting || errorData.meeting || { slug: 'unknown', title: 'Unknown' };\n\nconst dlqEntry = {\n  timestamp: new Date().toISOString(),\n  workflow: 'WF1-Ingest-v1.6.2',\n  meetingSlug: meeting.slug,\n  error: {\n    type: errorType,\n    message: errorMessage,\n    statusCode: statusCode\n  },\n  request: {\n    body: errorData.body,\n    hasHeaders: !!errorData.headers\n  }\n};\n\nreturn {\n  json: {\n    dlqEntry,\n    statusCode: statusCode,\n    errorType: errorType,\n    errorMessage: errorMessage\n  }\n};"
+      },
+      "id": "162bee2f-2c51-4843-ab80-33d62c9a82f3",
+      "name": "Build Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6128,
+        432
+      ],
+      "disabled": true,
+      "notes": "v1.6.2: Error metadata includes workflow version"
+    },
+    {
+      "parameters": {
+        "path": "=={{ `/Meetings/${$json.dlqEntry.meetingSlug || '_unknown'}/dlq/wf1_${$json.errorType || 'UNKNOWN'}_${($json.dlqEntry.timestamp || '').replace(/[:.]/g, '-')}.json` }}"
+      },
+      "id": "61944477-9377-4c1b-b40d-e93e0a158c73",
+      "name": "Save to DLQ",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -5968,
+        432
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "disabled": true,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "fromEmail": "kelvin.fallerb500.eu",
+        "toEmail": "info@blackonion.de",
+        "subject": "WF1 v1.4 Error: {{$json.dlqEntry.meetingSlug}}",
+        "text": "Error in WF1 v1.4\n\nMeeting: {{$json.dlqEntry.meetingSlug}}\nType: {{$json.errorType}}\nMessage: {{$json.dlqEntry.error.message}}\nStatus: {{$json.statusCode}}",
+        "options": {}
+      },
+      "id": "70b4f9fb-0038-4fff-9716-c9ea6ab4e271",
+      "name": "Send Error Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        -5808,
+        432
+      ],
+      "webhookId": "45e5ac51-210f-4df2-881a-6763a8ed0f4f",
+      "credentials": {
+        "smtp": {
+          "id": "6CZ9KQ2h2ASmMg5R",
+          "name": "SMTP account"
+        }
+      },
+      "disabled": true,
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  status: 'error',\n  error: {\n    type: $json.errorType,\n    message: $json.dlqEntry.error.message\n  }\n} }}",
+        "options": {
+          "responseCode": "=={{ $json.statusCode || 500 }}"
+        }
+      },
+      "id": "d1aac66f-2d9a-4687-985b-1f59ee022509",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -5648,
+        432
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const existingTranscript = $json.data;\nconst extractNode = $node[\"Extract & Validate Metadata\"];\nconst extractJson = extractNode ? (Array.isArray(extractNode.json) ? extractNode.json[0] : extractNode.json) : {};\nconst meeting = extractJson.meeting || {};\nconst meta = extractJson.meta || {};\nconst paths = extractJson.paths || {};\n\nreturn {\n  json: {\n    meeting,\n    meta: {\n      ...meta,\n      transcript: {\n        length: existingTranscript?.length || 0,\n        confidence: 1.0,\n        provider: 'cached',\n        processedAt: new Date().toISOString(),\n        note: 'Existing transcript loaded (idempotent)'\n      }\n    },\n    transcriptText: existingTranscript || '',\n    paths,\n    skippedSTT: true\n  }\n};"
+      },
+      "id": "44b2387d-82a4-49cd-abe7-1ab54ef2903d",
+      "name": "Load Existing Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3904,
+        32
+      ],
+      "notes": "Idempotency: Loads existing transcript, produces same structure as parse-stt-response"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// HMAC validation failed - build error response\nconst body = $json.body || {};\nconst headers = $json.headers || {};\n\nreturn {\n  json: {\n    isError: true,\n    error: 'HMAC_INVALID',\n    message: 'Invalid HMAC signature (X-Signature-256 does not match calculated hash)',\n    statusCode: 401,\n    body,\n    headers\n  }\n};"
+      },
+      "id": "f898aca2-52be-40ab-97e4-326f2b0fc161",
+      "name": "Set HMAC Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6144,
+        192
+      ],
+      "notes": "v1.7.0: Sets clear HMAC_INVALID error before DLQ"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Normalize Nonce Check Result and catch Nextcloud errors\nconst checkResult = $json;\nconst extractNode = $node[\"Extract Headers & Body\"];\nconst extractData = extractNode ? (Array.isArray(extractNode.json) ? extractNode.json[0] : extractNode.json) : {};\n\n// Helper to detect \"file not found\" cases without statusCode\nconst msg = (checkResult.message || checkResult.error || checkResult.body?.message || '').toString().toLowerCase();\nconst isNotFoundMsg = msg.includes('not exist') || msg.includes('not found') || msg.includes('не существует');\n\n// 1) 404 → treat as not exists\nif (checkResult.statusCode === 404 || isNotFoundMsg) {\n  return {\n    json: {\n      ...extractData,\n      exists: false,\n      isError: false,\n      nonceCheckFailed: false\n    }\n  };\n}\n\n// 2) 5xx or explicit error → cache unavailable\nif (checkResult.error || (checkResult.statusCode && checkResult.statusCode >= 500)) {\n  return {\n    json: {\n      isError: true,\n      error: 'NONCE_CACHE_UNAVAILABLE',\n      message: 'Nonce cache (Nextcloud) unavailable – cannot safely validate replay protection',\n      statusCode: 503,\n      body: extractData.body,\n      headers: extractData.headers,\n      nonceCheckFailed: true\n    }\n  };\n}\n\n// 3) Otherwise, normalize exists\nconst exists = checkResult.exists === true || checkResult.exists === 'true';\n\nreturn {\n  json: {\n    ...extractData,\n    exists: exists,\n    isError: false,\n    nonceCheckFailed: false\n  }\n};"
+      },
+      "id": "c38e69ae-7e81-431d-bb4f-436e4df6aa51",
+      "name": "Normalize Nonce Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5648,
+        16
+      ],
+      "notes": "v1.7.0: Catches Nextcloud errors and normalizes exists field"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.nonceCheckFailed }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "48672062-07b5-49f8-93fb-354dea1c3699",
+      "name": "Nonce Check Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -5488,
+        144
+      ],
+      "notes": "v1.7.0: Routes Nextcloud errors to DLQ with 503"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Nonce replay detected - build error response\nconst extractNode = $node[\"Extract Headers & Body\"];\nconst extractData = extractNode ? (Array.isArray(extractNode.json) ? extractNode.json[0] : extractNode.json) : {};\nconst body = extractData.body || {};\nconst headers = extractData.headers || {};\nconst nonce = extractData.nonce || 'unknown';\nconst timestamp = extractData.timestamp || 'unknown';\n\nreturn {\n  json: {\n    isError: true,\n    error: 'REPLAY_DETECTED',\n    message: `Replay detected: nonce has already been used for this timestamp (nonce: ${nonce}, timestamp: ${timestamp})`,\n    statusCode: 401,\n    body,\n    headers\n  }\n};"
+      },
+      "id": "1587af6c-376f-4b10-8595-7ee33d2ccb17",
+      "name": "Set Replay Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -5280,
+        208
+      ],
+      "notes": "v1.7.0: Sets clear REPLAY_DETECTED error before DLQ"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -7248,
+        144
+      ],
+      "id": "1b2e411b-0e3c-4110-9afa-9ffab337d9bc",
+      "name": "Test - Manual Start"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\n\n// 1) Body wie echter Request\nconst body = {\n  meeting: {\n    slug: '2025/11/17 - KI B Test',\n    title: 'Kickoff Testkunde',\n    datetime: '2025-11-23T13:00:00Z',\n    language: 'de',\n    participants: ['Testperson']\n  },\n  // hier später deine echte Test-Audio-URL eintragen\n  audioUrl: 'https://example.com/test-audio.wav',\n  source: 'wf1-manual-test'\n};\n\nconst rawBody = JSON.stringify(body);\n\n// 2) Timestamp & Nonce\nconst timestamp = Math.floor(Date.now() / 1000);\nconst nonce = 'manual-test-' + timestamp;\n\n// 3) HMAC berechnen (wenn HMAC_SECRET verfügbar)\nconst hmacSecret = $env.HMAC_SECRET;\nlet hmacSignature = 'sha256=dummy'; // Fallback für Tests ohne Secret\n\nif (hmacSecret && hmacSecret !== '') {\n  try {\n    const hmac = crypto\n      .createHmac('sha256', hmacSecret)\n      .update(rawBody, 'utf8')\n      .digest('hex');\n    hmacSignature = `sha256=${hmac}`;\n  } catch (error) {\n    // Falls HMAC-Berechnung fehlschlägt, verwende Fallback\n    console.warn('HMAC calculation failed, using dummy:', error.message);\n  }\n}\n\n// 4) Header mit korrekter HMAC\nconst headers = {\n  'x-signature-256': hmacSignature,\n  'x-timestamp': String(timestamp),\n  'x-nonce': nonce\n};\n\n// 5) Struktur wie beim Webhook-Input zurückgeben\nreturn {\n  json: {\n    headers,\n    body,\n    rawBody\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7056,
+        144
+      ],
+      "id": "f7887f4f-eb89-4df9-a553-a02d317535c8",
+      "name": "Build Test Request (WF1)"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cb5cf4da-9bb6-46a3-a052-53535c20dc7a",
+              "name": "hmac_secret",
+              "value": "={{$env.HMAC_SECRET}}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -6608,
+        -80
+      ],
+      "id": "537bebb6-6b99-4504-9e44-60a0f8580fdc",
+      "name": "Debug HMAC_SECRETS"
+    }
+  ],
+  "pinData": {
+    "Check Nonce Exists": [
+      {
+        "json": {
+          "nonce": "test-nonce-123",
+          "timestamp": "2025-11-23T13:00:00Z"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook Ingest": {
+      "main": [
+        [
+          {
+            "node": "Extract Headers & Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Headers & Body": {
+      "main": [
+        [
+          {
+            "node": "Has Validation Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute HMAC (Code)": {
+      "main": [
+        [
+          {
+            "node": "HMAC Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Validation Error?": {
+      "main": [
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Debug HMAC_SECRETS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC Valid?": {
+      "main": [
+        [
+          {
+            "node": "Check Timestamp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set HMAC Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set HMAC Error": {
+      "main": [
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Timestamp": {
+      "main": [
+        [
+          {
+            "node": "Timestamp Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Timestamp Error?": {
+      "main": [
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Nonce Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Nonce Exists": {
+      "main": [
+        [
+          {
+            "node": "Normalize Nonce Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Nonce Check": {
+      "main": [
+        [
+          {
+            "node": "Nonce Check Failed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nonce Check Failed?": {
+      "main": [
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nonce New?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nonce New?": {
+      "main": [
+        [
+          {
+            "node": "Create Nonce File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Replay Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Replay Error": {
+      "main": [
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Nonce File": {
+      "main": [
+        [
+          {
+            "node": "Extract & Validate Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract & Validate Metadata": {
+      "main": [
+        [
+          {
+            "node": "Metadata Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Metadata Error?": {
+      "main": [
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Meeting Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Error Response": {
+      "main": [
+        [
+          {
+            "node": "Save to DLQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to DLQ": {
+      "main": [
+        [
+          {
+            "node": "Send Error Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Email": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Meeting Folder": {
+      "main": [
+        [
+          {
+            "node": "Create /raw/ Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create /raw/ Folder": {
+      "main": [
+        [
+          {
+            "node": "Create /out/ Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create /out/ Folder": {
+      "main": [
+        [
+          {
+            "node": "Create /dlq/ Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create /dlq/ Folder": {
+      "main": [
+        [
+          {
+            "node": "Merge Folder Creation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Folder Creation": {
+      "main": [
+        [
+          {
+            "node": "Check Transcript Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Transcript Exists": {
+      "main": [
+        [
+          {
+            "node": "Transcript Missing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcript Missing?": {
+      "main": [
+        [
+          {
+            "node": "Has Binary File?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Existing Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Binary File?": {
+      "main": [
+        [
+          {
+            "node": "Upload Original File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare STT Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare STT Request": {
+      "main": [
+        [
+          {
+            "node": "Download Audio (for STT)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Audio (for STT)": {
+      "main": [
+        [
+          {
+            "node": "Call Deepgram STT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Deepgram STT": {
+      "main": [
+        [
+          {
+            "node": "STT HTTP Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "STT HTTP Error?": {
+      "main": [
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Parse STT Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse STT Response": {
+      "main": [
+        [
+          {
+            "node": "STT Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "STT Error?": {
+      "main": [
+        [
+          {
+            "node": "Build Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Transcript": {
+      "main": [
+        [
+          {
+            "node": "Save Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Meta": {
+      "main": [
+        [
+          {
+            "node": "Merge Saves",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Saves": {
+      "main": [
+        [
+          {
+            "node": "Prepare WF2 Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare WF2 Data": {
+      "main": [
+        [
+          {
+            "node": "Trigger WF2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger WF2": {
+      "main": [
+        [
+          {
+            "node": "Build Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Success Response": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test - Manual Start": {
+      "main": [
+        [
+          {
+            "node": "Build Test Request (WF1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Test Request (WF1)": {
+      "main": [
+        [
+          {
+            "node": "Extract Headers & Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Debug HMAC_SECRETS": {
+      "main": [
+        [
+          {
+            "node": "Compute HMAC (Code)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "83a864ac-c33d-46ce-b339-f667ab8c2a86",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5903d2841eda70226ca7b46a7d2dd9a70df78499365b9bbf7149eb7512056f56"
+  },
+  "id": "prcAsS7JqJRXJUPh",
+  "tags": []
+}

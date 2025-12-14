@@ -1,0 +1,1164 @@
+{
+  "name": "WF 3 Tasks nach SeaTable",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "996304d8-e501-4a4b-8c6d-a982948da849",
+      "name": "Entry - Input Parameters",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [
+        -3728,
+        336
+      ],
+      "notes": "Receives: baseDir, meeting_id, todos_path, summary_path"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// B1: Build and normalize all important paths\nconst input = $json;\n\n// baseDir z.B. \"/Meetings/2025/11/17 - KI B Test/\"\nconst baseDir = input.baseDir || '';\n\n// relative Defaults\nlet todosPath = input.todos_path || 'out/todos.json';\nlet summaryPath = input.summary_path || 'out/summary.md';\n\n// Wenn der Pfad schon mit \"/\" beginnt, ist er absolut -> nicht nochmal baseDir davorsetzen\nconst makeFullPath = (p) => {\n\tif (!p) return '';\n\tif (p.startsWith('/')) return p;\n\tif (!baseDir) return p;\n\t// baseDir hat bei dir schon das \"/\" am Ende, doppelte Slashes sind bei WebDAV egal\n\treturn `${baseDir}${p}`;\n};\n\nconst todosFullPath = makeFullPath(todosPath);\nconst summaryFullPath = makeFullPath(summaryPath);\n\n// Weitere Pfade auf Basis von baseDir\nconst taskResultsPath = baseDir ? `${baseDir}out/taskResults.json` : 'out/taskResults.json';\nconst dlqPathBase = baseDir ? `${baseDir}dlq` : 'dlq';\n\nreturn {\n\tjson: {\n\t\tbaseDir,\n\t\tmeeting_id: input.meeting_id,\n\t\ttodos_path: todosPath,\n\t\tsummary_path: summaryPath,\n\t\ttodosFullPath,\n\t\tsummaryFullPath,\n\t\ttaskResults_path: taskResultsPath,\n\t\tdlqPathBase,\n\t\ttimestamp: new Date().toISOString(),\n\t},\n};"
+      },
+      "id": "80d8b87b-cac6-49a2-9c46-21645c6246c8",
+      "name": "Prepare Paths",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3072,
+        832
+      ],
+      "notes": "Calculates all required paths"
+    },
+    {
+      "parameters": {
+        "path": "={{$json.todosFullPath}}"
+      },
+      "id": "5d205e75-f3f0-492d-bda7-ec8069ded135",
+      "name": "Read todos.json (WebDAV)",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -2928,
+        832
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "Reads todos.json from Nextcloud"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error === undefined }}",
+              "value2": "={{ true }}"
+            }
+          ]
+        }
+      },
+      "id": "00adb2f8-5b8e-4961-a6b5-582cb1e173fa",
+      "name": "WebDAV Read Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -2768,
+        832
+      ],
+      "notes": "Check if WebDAV read failed"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// WF3 – Parse & Validate todos.json (binary-sicher, UTS-v2-Normalizer)\n\nconst pathsData = $('Prepare Paths').first().json || {};\n\nconst buildError = (errorType, errorCode, errorMessage, extra = {}) => {\n  return {\n    json: {\n      ...pathsData,\n      error: true,\n      error_type: errorType,\n      error_code: errorCode,\n      error_message: errorMessage,\n      ...extra,\n    },\n  };\n};\n\nlet parsed;\n\n// 1) Dateiinhalt laden: zuerst als Binary (WebDAV), sonst JSON-Fallback\ntry {\n  // Holt den echten Datei-Buffer aus dem Binary-Slot \"data\"\n  const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n  const text = buffer.toString('utf8').trim();\n\n  if (!text) {\n    return buildError('data', 'JSON_PARSE_ERROR', 'todos.json is empty');\n  }\n\n  parsed = JSON.parse(text);\n} catch (e) {\n  // Wenn kein Binary vorhanden ist (oder Helper fehlschlägt), versuchen wir $json\n  const jsonInput = $json || {};\n  if (!Object.keys(jsonInput).length) {\n    return buildError('data', 'MISSING_DATA', 'todos.json not found in binary or json');\n  }\n  parsed = jsonInput;\n}\n\n// 2) Tasks-/Todos-Array möglichst tolerant finden\nconst extractTasks = (obj) => {\n  if (!obj) return null;\n  if (Array.isArray(obj.tasks)) return obj.tasks;\n  if (Array.isArray(obj.todos)) return obj.todos;\n  if (Array.isArray(obj)) return obj;\n  const arrayKey = Object.keys(obj).find((k) => Array.isArray(obj[k]));\n  return arrayKey ? obj[arrayKey] : null;\n};\n\nconst tasksRaw = extractTasks(parsed);\n\nif (!tasksRaw) {\n  return buildError(\n    'data',\n    'INVALID_UTS_V2',\n    'Could not find any tasks/todos array in todos.json',\n    { parsedKeys: Object.keys(parsed || {}) },\n  );\n}\n\n// 3) Meetinginformationen normalisieren\nconst meeting = parsed.meeting || {};\nconst meetingSlug =\n  meeting.slug ||\n  parsed.meeting_id ||\n  parsed.meetingId ||\n  pathsData.meeting_id ||\n  null;\n\nconst normalizeStatus = (status) => {\n  const s = String(status || '').toLowerCase();\n  if (!s || s === 'open' || s === 'todo') return 'todo';\n  if (s === 'in_progress' || s === 'doing') return 'in_progress';\n  if (s === 'blocked') return 'blocked';\n  if (s === 'done' || s === 'closed') return 'done';\n  return 'todo';\n};\n\nconst normalizePriority = (priority) => {\n  const p = String(priority || '').toLowerCase();\n  if (p === 'low') return 'low';\n  if (p === 'high') return 'high';\n  return 'medium';\n};\n\nconst normalizeAssignees = (task) => {\n  // v2: assignees[]\n  if (Array.isArray(task.assignees) && task.assignees.length > 0) {\n    return task.assignees;\n  }\n  // v1: assignee als String\n  if (task.assignee) {\n    return [{ name: task.assignee, email: task.assignee_email || null }];\n  }\n  return [];\n};\n\n// 4) UTS-v2-kompatibles Objekt bauen\nconst utsObject = {\n  schemaVersion: parsed.schemaVersion || '2.0.0',\n  meeting: {\n    slug: meetingSlug,\n    title: meeting.title || null,\n    datetime: meeting.datetime || null,\n    participants: Array.isArray(meeting.participants) ? meeting.participants : [],\n  },\n  tasks: tasksRaw.map((t) => ({\n    uid: String(t.uid ?? ''),\n    title: t.title ?? '',\n    description: t.description ?? '',\n    status: normalizeStatus(t.status),\n    priority: normalizePriority(t.priority),\n    assignees: normalizeAssignees(t),\n    assigneeConfidence: normalizeAssignees(t).length ? 'high' : 'low',\n    due: t.due || null,\n    labels: Array.isArray(t.labels) && t.labels.length ? t.labels : ['meeting'],\n    customFields: Array.isArray(t.customFields) ? t.customFields : [],\n  })),\n};\n\n// 5) Erfolgsobjekt für die nächsten Nodes\nreturn {\n  json: {\n    ...pathsData,\n    error: false,\n    todos_object: utsObject,\n  },\n};"
+      },
+      "id": "7330e93c-70e4-4a8b-93ea-7843dfe66062",
+      "name": "Parse & Validate todos.json",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2624,
+        688
+      ],
+      "notes": "Parse JSON and validate structure"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "05064480-952e-4a36-8ad9-4112db5f3a10",
+      "name": "Parse Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -2496,
+        688
+      ],
+      "notes": "Check if parsing failed"
+    },
+    {
+      "parameters": {
+        "url": "https://cloud.seatable.io/api/v2.1/dtable/app-access-token/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer bc913584a19f507366f5d580cf297d3a41b98657"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "c9bc2e41-0c29-479b-8ee3-584d539ea89b",
+      "name": "Get SeaTable Access Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -2336,
+        576
+      ],
+      "continueOnFail": true,
+      "notes": "Get app access token and dtable_uuid"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error !== undefined || $json.statusCode >= 400 }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "37aa88f0-40ff-4cb4-86eb-37c3b8d843e3",
+      "name": "Auth Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -2192,
+        576
+      ],
+      "notes": "Check for 401/403 auth errors"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const pathsData = $('Prepare Paths').first().json;\nconst parseData = $('Parse & Validate todos.json').first().json;\n\nif (parseData.error) {\n  return {\n    json: parseData,\n  };\n}\n\nconst SEATABLE_BASE_URL = 'https://cloud.seatable.io';\nconst SEATABLE_API_TOKEN = 'bc913584a19f507366f5d580cf297d3a41b98657';\nconst SEATABLE_BASE_ID = '71ch8743-h25e-4729-8989-13k9k02ad&fd';\n\nreturn {\n  json: {\n    ...pathsData,\n    todos_object: parseData.todos_object,\n    seatable_base_url: SEATABLE_BASE_URL,\n    access_token: SEATABLE_API_TOKEN,\n    dtable_uuid: SEATABLE_BASE_ID,\n  },\n};"
+      },
+      "id": "a10984f7-c86e-443a-9f89-2fb6cb05491e",
+      "name": "Extract Token & UUID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2048,
+        448
+      ],
+      "notes": "Extract access_token and dtable_uuid"
+    },
+    {
+      "parameters": {
+        "url": "=https://cloud.seatable.io/api-gateway/api/v2/dtables/{{$node[\"Get SeaTable Access Token\"].json.dtable_uuid}}/rows/",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "table_name",
+              "value": "todos_v1"
+            },
+            {
+              "name": "start",
+              "value": "0"
+            },
+            {
+              "name": "limit",
+              "value": "1000"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=={{ 'Bearer ' + $node[\"Get SeaTable Access Token\"].json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "3b6e2083-8145-4667-99df-beceaed3a83d",
+      "name": "List Existing Rows (Pagination)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -1728,
+        448
+      ],
+      "continueOnFail": true,
+      "notes": "v1.0.5: Uses $json fields, auth=none with custom header (B2+B3)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// B2: Build UID index and keep base data\n\nconst response = $json;\nconst tokenData = $('Extract Token & UUID').first().json;\nconst urlData = $('Set SeaTable URL').first().json;\n\n// Token + URL + Paths zusammenführen\nconst baseData = {\n\t...tokenData,\n\t...urlData,\n};\n\nif (response.error || !response.rows) {\n\treturn {\n\t\tjson: {\n\t\t\t...baseData,\n\t\t\terror: true,\n\t\t\terror_type: 'data',\n\t\t\terror_code: 'UPSTREAM_ERROR',\n\t\t\terror_message: 'Failed to list SeaTable rows',\n\t\t\texistingRowsCount: 0,\n\t\t\tuidIndex: {},\n\t\t},\n\t};\n}\n\nconst uidIndex = {};\nfor (const row of response.rows) {\n\tif (row.todo_id) {\n\t\tuidIndex[row.todo_id] = row._id;\n\t}\n}\n\nreturn {\n\tjson: {\n\t\t...baseData,\n\t\terror: false,\n\t\texistingRowsCount: response.rows.length,\n\t\tuidIndex,\n\t},\n};"
+      },
+      "id": "5f06e925-8e66-4eb5-9c21-761678bd845a",
+      "name": "Build UID Index",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1424,
+        384
+      ],
+      "notes": "v1.0.5: Preserves seatable_base_url from set-seatable-url (B2)"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "seatable-url",
+              "name": "seatable_base_url",
+              "value": "https://cloud.seatable.io",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "07156e5c-81e7-4f22-a972-1f8e44603c26",
+      "name": "Set SeaTable URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        -1888,
+        448
+      ],
+      "notes": "v1.0.2: Uses fixed base URL (B3 fix)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Split tasks for batch processing\nconst data = $json;\nconst tasks = (data.todos_object && Array.isArray(data.todos_object.tasks))\n  ? data.todos_object.tasks\n  : (data.tasks || []);\n\nif (tasks.length === 0) {\n  return {\n    json: {\n      ...data,\n      noTasks: true,\n      taskResults: []\n    }\n  };\n}\n\n// Return data with normalized tasks for Split In Batches node\nreturn {\n  json: {\n    ...data,\n    tasks,\n  }\n};"
+      },
+      "id": "7ae03006-c3ee-4b7e-8365-5737e73e6d87",
+      "name": "Prepare Upsert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        384
+      ],
+      "notes": "Prepare for task upsert loop"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// B4: Expand tasks array into individual items\nconst items = $input.all();\nconst allExpanded = [];\n\nfor (const item of items) {\n  const data = item.json;\n  const tasks = data.tasks || [];\n\n  if (tasks.length === 0) {\n    allExpanded.push({\n      json: {\n        ...data,\n        noTasks: true,\n        task: null\n      }\n    });\n  } else {\n    // Return array of items, one per task\n    const expanded = tasks.map(task => ({\n      json: {\n        ...data,\n        task: task,\n        noTasks: false,\n        tasksCount: tasks.length\n      }\n    }));\n    allExpanded.push(...expanded);\n  }\n}\n\nreturn allExpanded;"
+      },
+      "id": "69281dae-a72e-4fd7-83b8-9a6bf07156de",
+      "name": "Expand Tasks to Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        384
+      ],
+      "notes": "v1.0.7: Fixed mode to runOnceForAllItems to return array (BUGFIX)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.error !== undefined || $json.statusCode >= 500 }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "9db9125d-9d58-4507-b2ef-bad1de17e2fb",
+      "name": "List Rows Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -1584,
+        448
+      ],
+      "notes": "v1.0.1: Check if list rows failed (B5 fix)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ Array.isArray($json.todos_object.tasks) && $json.todos_object.tasks.length > 0 }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "1268ad21-dde7-488d-830e-bb1162d44e2e",
+      "name": "Has Tasks?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -976,
+        384
+      ],
+      "notes": "Skip upsert if no tasks"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "e1ca1bb8-ff86-4759-9089-783e5f3d6e38",
+      "name": "Split Tasks",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -816,
+        272
+      ],
+      "notes": "Process tasks one by one"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item.json;\n\nlet task = item.task;\nif (!task && item.todos_object && Array.isArray(item.todos_object.tasks)) {\n  task = item.todos_object.tasks[0];\n}\n\nif (!task) {\n  return {\n    json: {\n      ...item,\n      skip: true,\n      reason: 'No task in item',\n    },\n  };\n}\n\nconst uidIndex = item.uidIndex || {};\nconst rowId = task.uid ? uidIndex[task.uid] : undefined;\nconst operation = rowId ? 'update' : 'create';\n\nconst rawStatus = (task.status || '').toLowerCase().trim();\nconst statusMap = {\n  todo: 'todo',\n  open: 'todo',\n  in_progress: 'todo',\n  doing: 'todo',\n  done: 'done',\n  closed: 'done',\n};\nconst normalizedStatus = statusMap[rawStatus] || 'todo';\n\nlet assigneeName = null;\nif (Array.isArray(task.assignees) && task.assignees.length > 0) {\n  assigneeName = task.assignees[0].name || null;\n}\n\nconst meetingId = item.meeting_id || item.todos_object?.meeting?.slug || null;\nconst dueDate = task.due ? String(task.due).slice(0, 10) : null;\nconst createdAt = (item.timestamp || new Date().toISOString()).slice(0, 10);\n\nconst payload = {\n  todo_id: task.uid || '',\n  meeting_id: meetingId,\n  who: assigneeName,\n  what: task.title || '',\n  due: dueDate,\n  status: normalizedStatus,\n  created_at: createdAt,\n};\n\nreturn {\n  json: {\n    ...item,\n    skip: false,\n    reason: undefined,\n    task,\n    currentTask: task,\n    payload,\n    operation,\n    rowId,\n  },\n};"
+      },
+      "id": "741ac16a-1bff-42ad-a5e7-88bf724838c1",
+      "name": "Normalize Task & Map Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        160
+      ],
+      "notes": "v1.0.3: Uses $json.task directly (B4)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.operation }}",
+              "value2": "update"
+            }
+          ]
+        }
+      },
+      "id": "093110ca-bead-461b-a8c8-6e68094c9457",
+      "name": "Update or Create?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        160
+      ],
+      "notes": "Branch: Update existing or Create new"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://cloud.seatable.io/api-gateway/api/v2/dtables/{{$node[\"Get SeaTable Access Token\"].json.dtable_uuid}}/rows/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=={{ 'Bearer ' + $node[\"Get SeaTable Access Token\"].json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { table_name: \"todos_v1\", row_id: $json.rowId, row: $json.payload } }}",
+        "options": {}
+      },
+      "id": "1e2ddd71-9990-4d15-90e6-1faede05afca",
+      "name": "Update Row (PUT)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -240,
+        272
+      ],
+      "continueOnFail": true,
+      "notes": "v1.0.5: Uses $json.seatable_base_url and dtable_uuid (B2)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const normData = $('Normalize Task & Map Fields').item($item).json;\nconst httpResponse = $json;\n\nreturn {\n  json: {\n    ...normData,\n    httpResponse,\n  },\n};"
+      },
+      "id": "fc3f5cf5-cf7a-45fa-be01-ae8b176f758c",
+      "name": "Merge Update Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        272
+      ],
+      "notes": "v1.0.5: Merges response with original item (B1)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://cloud.seatable.io/api-gateway/api/v2/dtables/{{$node[\"Get SeaTable Access Token\"].json.dtable_uuid}}/rows/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $node[\"Get SeaTable Access Token\"].json.access_token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"table_name\": \"todos_v1\",\n  \"rows\": [ $json.payload ]\n} }}",
+        "options": {
+          "allowUnauthorizedCerts": false
+        }
+      },
+      "id": "903679b5-f9bc-4a09-a209-d1bc45879e8d",
+      "name": "Create Row (POST)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -240,
+        48
+      ],
+      "continueOnFail": true,
+      "notes": "v1.0.6: Fixed URL to use hardcoded base URL like Update Row (BUGFIX)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const normData = $('Normalize Task & Map Fields').item.json;\nconst httpResponse = $json;\n\nreturn {\n  json: {\n    ...normData,\n    httpResponse,\n  },\n};"
+      },
+      "id": "eab88f57-1444-42f9-bfde-3a9c6059d6d3",
+      "name": "Merge Create Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        48
+      ],
+      "notes": "v1.0.5: Merges response with original item (B1)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// B2: Build result object from current item (not .first())\nconst data = $json;\n\n// All data should be in current item\nconst task = data.currentTask || {};\nconst payload = data.payload || {};\nconst operation = data.operation || 'unknown';\nconst rowId = data.rowId;\n\n// HTTP response might be in data (from Create/Update node)\nconst httpResponse = data;\n\n// Determine final operation status\nlet finalOperation = operation;\nif (httpResponse.error || httpResponse.statusCode >= 400) {\n  finalOperation = 'failed';\n} else if (operation === 'update') {\n  finalOperation = 'updated';\n} else if (operation === 'create') {\n  finalOperation = 'created';\n}\n\n// Get row ID from response or original\nconst finalRowId = httpResponse._id || rowId || null;\n\n// Build rowUrl if we have rowId and base URL\nconst rowUrl = finalRowId && data.seatable_base_url && data.dtable_uuid\n  ? `${data.seatable_base_url}/dtable/forms/${data.dtable_uuid}?rid=${finalRowId}`\n  : null;\n\nconst result = {\n  system: 'seatable',\n  uid: task.uid || 'unknown',\n  rowId: finalRowId,\n  rowUrl: rowUrl,\n  taskTitle: task.title || 'Unknown',\n  status: payload.status || 'unknown',\n  operation: finalOperation,\n  error: httpResponse.error || null\n};\n\nreturn {\n  json: {\n    ...data,\n    taskResult: result\n  }\n};"
+      },
+      "id": "39660ba4-310c-44ba-a710-eeb36e847d90",
+      "name": "Build Task Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        160
+      ],
+      "notes": "v1.0.4: Uses $json only, no .first() (B2 fix)"
+    },
+    {
+      "parameters": {},
+      "id": "d36911f0-8bc9-496e-b7b7-c3bf050e88cf",
+      "name": "Collect Task Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        272,
+        272
+      ],
+      "notes": "v1.0.3: Collects all taskResult items from loop (B1)"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "13cd9c91-f01f-40e2-b297-2f1925579036",
+      "name": "Merge All Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        448,
+        368
+      ],
+      "notes": "Aggregate all task results"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst taskResultItems = items\n  .map(item => item.json.taskResult)\n  .filter(r => r != null);\n\nconst firstItem = (items[0] && items[0].json) ? items[0].json : {};\n\nconst created = taskResultItems.filter(r => r.operation === 'created').length;\nconst updated = taskResultItems.filter(r => r.operation === 'updated').length;\nconst failed  = taskResultItems.filter(r => r.operation === 'failed').length;\n\nconst aggregate = {\n  meeting_id: firstItem.meeting_id,\n  baseDir: firstItem.baseDir,\n  summary_path: firstItem.summary_path,\n  todos_path: firstItem.todos_path,\n  taskResults_path: firstItem.taskResults_path,\n  stats: {\n    total: taskResultItems.length,\n    created,\n    updated,\n    failed,\n  },\n  results: taskResultItems,\n};\n\nreturn [\n  {\n    json: {\n      ...firstItem,\n      taskResults: aggregate,\n    },\n  },\n];"
+      },
+      "id": "0da5556c-09f1-4def-9118-41991ba83d31",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        432
+      ],
+      "notes": "v1.0.2: Fixed to aggregate taskResult properly (B2)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// B4: Check if critical error (all tasks failed)\nconst data = $json;\nconst stats = data.taskResultsObj?.meta?.stats || {};\n\nconst created = stats.created || 0;\nconst updated = stats.updated || 0;\nconst failed = stats.failed || 0;\n\n// Critical error: no successes and at least one failure\nconst criticalError = (created + updated === 0) && (failed > 0);\n\nreturn {\n  json: {\n    ...data,\n    criticalError,\n    shouldTriggerWF4: !criticalError,\n    stats  // Pass stats for DLQ if needed\n  }\n};"
+      },
+      "id": "cd2d71a0-5b57-4ff6-87dd-b84fcada90e2",
+      "name": "Check Critical Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        432
+      ],
+      "notes": "v1.0.2: Uses stats from taskResultsObj (B4)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.criticalError }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "9e1dee1d-5fca-4d74-9e2c-7851e10c923c",
+      "name": "Critical Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        912,
+        432
+      ],
+      "notes": "v1.0.1: Route to DLQ if critical"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const pathsData = $('Prepare Paths').first().json || {};\nconst errorData = $json || {};\nconst ctx = errorData.context || {};\n\nconst statusCode = errorData.status_code || ctx.statusCode || ctx.httpCode || 0;\n\nlet error_type = errorData.error_type || 'unknown';\nlet error_code = errorData.error_code || (statusCode ? `HTTP_${statusCode}` : 'UNKNOWN_ERROR');\n\nreturn {\n  json: {\n    ...pathsData,\n    error: true,\n    error_type,\n    error_code,\n    status_code: statusCode,\n    message: errorData.message,\n    details: errorData.description || '',\n    timestamp: new Date().toISOString(),\n    workflow: 'WF3',\n    source_node: 'Get SeaTable Access Token',\n  },\n};"
+      },
+      "id": "fda728dc-f786-4f73-87d0-e3f40f12a34b",
+      "name": "Build DLQ Entry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        848
+      ],
+      "notes": "v1.0.4: Improved error classification (B4)"
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "path": "={{$json.dlqPath}}"
+      },
+      "id": "4014a994-797e-4b85-8534-4eaf3606d5a4",
+      "name": "Write DLQ File",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -64,
+        848
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "continueOnFail": true,
+      "notes": "Write error to DLQ"
+    },
+    {
+      "parameters": {},
+      "id": "6b7a58d1-ce64-47f7-b527-08cc588285b2",
+      "name": "Stop - Error Exit",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        96,
+        848
+      ],
+      "notes": "End workflow on error (no WF4 trigger)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// B2: Handle empty tasks case - create minimal taskResults\nconst data = $json;\n\nconst taskResultsObj = {\n  meeting: {\n    slug: data.meeting?.slug || '',\n    id: data.meeting_id || ''\n  },\n  results: [],\n  meta: {\n    createdAt: new Date().toISOString(),\n    wfVersions: {\n      tasks: 'v1.0.5'\n    },\n    stats: {\n      totalTasks: 0,\n      created: 0,\n      updated: 0,\n      failed: 0\n    }\n  }\n};\n\nreturn {\n  json: {\n    ...data,\n    taskResultsObj,\n    taskResultsJson: JSON.stringify(taskResultsObj, null, 2)\n  }\n};"
+      },
+      "id": "3fbd8dfe-5e8f-4bb9-a2f4-d39769c6fc0e",
+      "name": "Handle Empty Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        448
+      ],
+      "notes": "v1.0.3: Updated to v1.0.3 with stats structure (B2)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item;\nconst json = item.json;\n\nconst content = json;\nconst jsonString = JSON.stringify(content, null, 2);\n\n// Binary vorbereiten\nif (!item.binary) {\n  item.binary = {};\n}\n\nitem.binary.data = {\n  data: Buffer.from(jsonString, 'utf8').toString('base64'),\n  mimeType: 'application/json',\n  fileName: 'taskResults.json',\n};\n\n// taskResults_path zuverlässig aus todos_path ableiten\nif (json.todos_path) {\n  json.taskResults_path = json.todos_path.replace(/todos\\.json$/, 'taskResults.json');\n}\n\nreturn item;"
+      },
+      "id": "d70bc6b5-9ee7-4505-be09-f9bd6d44b95e",
+      "name": "Build taskResults Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        512
+      ],
+      "notes": "v1.0.2: Fixed to aggregate taskResult properly (B2)"
+    },
+    {
+      "parameters": {
+        "path": "={{ $json.taskResults_path }}",
+        "binaryDataUpload": true
+      },
+      "id": "44c0d51f-475c-4177-a90e-9d432d08d8e9",
+      "name": "Write taskResults.json (Nextcloud)",
+      "type": "n8n-nodes-base.nextCloud",
+      "typeVersion": 1,
+      "position": [
+        1312,
+        512
+      ],
+      "credentials": {
+        "nextCloudApi": {
+          "id": "A7eo6Qd3GzmPPqvZ",
+          "name": "NextCloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -3248,
+        832
+      ],
+      "id": "b58c9300-045f-4499-a4ea-210a3ddd1e04",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "rIsKJMp6aBm1X5b7",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/rIsKJMp6aBm1X5b7",
+          "cachedResultName": "WF4_Debug_Nextcloud_todos"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {}
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1520,
+        512
+      ],
+      "id": "237f12cd-cc3f-4c25-b38c-5cebbc259612",
+      "name": "Call 'WF4_Debug_Nextcloud_todos'"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Entry - Input Parameters": {
+      "main": [
+        []
+      ]
+    },
+    "Prepare Paths": {
+      "main": [
+        [
+          {
+            "node": "Read todos.json (WebDAV)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read todos.json (WebDAV)": {
+      "main": [
+        [
+          {
+            "node": "WebDAV Read Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WebDAV Read Error?": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate todos.json",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build DLQ Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build DLQ Entry": {
+      "main": [
+        [
+          {
+            "node": "Write DLQ File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write DLQ File": {
+      "main": [
+        [
+          {
+            "node": "Stop - Error Exit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate todos.json": {
+      "main": [
+        [
+          {
+            "node": "Parse Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Error?": {
+      "main": [
+        [
+          {
+            "node": "Build DLQ Entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get SeaTable Access Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get SeaTable Access Token": {
+      "main": [
+        [
+          {
+            "node": "Auth Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auth Error?": {
+      "main": [
+        [
+          {
+            "node": "Build DLQ Entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Token & UUID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Token & UUID": {
+      "main": [
+        [
+          {
+            "node": "Set SeaTable URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set SeaTable URL": {
+      "main": [
+        [
+          {
+            "node": "List Existing Rows (Pagination)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Tasks?": {
+      "main": [
+        [
+          {
+            "node": "Split Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Empty Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Existing Rows (Pagination)": {
+      "main": [
+        [
+          {
+            "node": "List Rows Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Rows Error?": {
+      "main": [
+        [
+          {
+            "node": "Build DLQ Entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build UID Index",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build UID Index": {
+      "main": [
+        [
+          {
+            "node": "Prepare Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Upsert": {
+      "main": [
+        [
+          {
+            "node": "Expand Tasks to Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Tasks to Items": {
+      "main": [
+        [
+          {
+            "node": "Has Tasks?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Empty Tasks": {
+      "main": [
+        [
+          {
+            "node": "Merge All Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Normalize Task & Map Fields": {
+      "main": [
+        [
+          {
+            "node": "Update or Create?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update or Create?": {
+      "main": [
+        [
+          {
+            "node": "Update Row (PUT)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Row (POST)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Row (PUT)": {
+      "main": [
+        [
+          {
+            "node": "Merge Update Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Row (POST)": {
+      "main": [
+        [
+          {
+            "node": "Merge Create Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Create Response": {
+      "main": [
+        [
+          {
+            "node": "Build Task Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Update Response": {
+      "main": [
+        [
+          {
+            "node": "Build Task Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Task Result": {
+      "main": [
+        [
+          {
+            "node": "Collect Task Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Task Results": {
+      "main": [
+        [
+          {
+            "node": "Merge All Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Check Critical Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Critical Error": {
+      "main": [
+        [
+          {
+            "node": "Critical Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critical Error?": {
+      "main": [
+        [
+          {
+            "node": "Build DLQ Entry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build taskResults Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Tasks": {
+      "main": [
+        [
+          {
+            "node": "Collect Task Results",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Normalize Task & Map Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Results": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build taskResults Binary": {
+      "main": [
+        [
+          {
+            "node": "Write taskResults.json (Nextcloud)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write taskResults.json (Nextcloud)": {
+      "main": [
+        [
+          {
+            "node": "Call 'WF4_Debug_Nextcloud_todos'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Prepare Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "e1346baf-9d9e-4d08-8a2c-5e2e0dd15c56",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5903d2841eda70226ca7b46a7d2dd9a70df78499365b9bbf7149eb7512056f56"
+  },
+  "id": "FppaMtEzgfdgMqe8",
+  "tags": []
+}

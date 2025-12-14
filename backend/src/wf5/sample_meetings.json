@@ -1,0 +1,36 @@
+[
+  {
+    "slug": "2025/10/01 - Legacy Session",
+    "baseDir": "/Meetings/2025/10/01 - Legacy Session/",
+    "lastModified": "2025-10-01T12:00:00Z",
+    "hasRaw": true,
+    "hasOut": true,
+    "hasDlq": false
+  },
+  {
+    "slug": "2025/11/25 - No Raw Output Check",
+    "baseDir": "/Meetings/2025/11/25 - No Raw Output Check/",
+    "lastModified": "2025-11-25T09:15:00Z",
+    "hasRaw": false,
+    "hasOut": true,
+    "hasDlq": false
+  },
+  {
+    "slug": "2025/11/28 - Missing Output",
+    "baseDir": "/Meetings/2025/11/28 - Missing Output/",
+    "lastModified": "2025-11-28T16:45:00Z",
+    "hasRaw": true,
+    "hasOut": false,
+    "hasDlq": false
+  },
+  {
+    "slug": "2025/10/15 - DLQ Present",
+    "baseDir": "/Meetings/2025/10/15 - DLQ Present/",
+    "lastModified": "2025-10-15T08:00:00Z",
+    "hasRaw": true,
+    "hasOut": true,
+    "hasDlq": true
+  }
+]
+
+

@@ -1,0 +1,314 @@
+{
+  "name": "WF5 – MEET-05_Retention_Lite",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "node-manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "everyDay",
+        "hour": 3,
+        "minute": 0
+      },
+      "id": "node-cron-schedule",
+      "name": "Cron Schedule (03:00)",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        180,
+        440
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "baseMeetingsPath",
+              "value": "/Meetings/"
+            },
+            {
+              "name": "reportsPath",
+              "value": "/Meetings/_reports/"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-set-config",
+      "name": "Set WF5 Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "list",
+        "path": "={{$json.baseMeetingsPath}}",
+        "options": {
+          "depth": 1,
+          "resolvePath": true
+        }
+      },
+      "id": "node-webdav-list-meetings",
+      "name": "List Meetings Folder",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        640,
+        300
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "",
+          "name": "WebDAV account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.type }}",
+              "operation": "equal",
+              "value2": "directory"
+            },
+            {
+              "value1": "={{ $json.basename || $json.filename || $json.name }}",
+              "operation": "notEqual",
+              "value2": "_reports"
+            }
+          ]
+        }
+      },
+      "id": "node-filter-folders",
+      "name": "Filter Meeting Folders",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const baseMeetingsPath = $json.baseMeetingsPath || '/Meetings/';\n\nconst checkFolderExists = async (relativePath) => {\n  try {\n    await this.helpers.requestWithAuthentication.call(this, 'webdav', {\n      method: 'PROPFIND',\n      url: relativePath,\n      headers: {\n        Depth: 1,\n      },\n    });\n    return true;\n  } catch (error) {\n    return false;\n  }\n};\n\nconst metas = [];\n\nfor (const item of items) {\n  const slug = item.json.basename || item.json.filename || item.json.name || '';\n  if (!slug) continue;\n\n  const baseDir = `${baseMeetingsPath}${slug}/`;\n  const rawPath = `${baseDir}raw/`;\n  const outPath = `${baseDir}out/`;\n  const dlqPath = `${baseDir}dlq/`;\n\n  const hasRaw = await checkFolderExists(rawPath);\n  const hasOut = await checkFolderExists(outPath);\n  const hasDlq = await checkFolderExists(dlqPath);\n\n  // Try to reuse last modified info from listing; fallback to now\n  const lastModified = item.json.lastmod || item.json.lastModified || new Date().toISOString();\n\n  metas.push({\n    slug,\n    baseDir,\n    lastModified,\n    hasRaw,\n    hasOut,\n    hasDlq,\n  });\n}\n\nreturn metas.map((m) => ({ json: m }));"
+      },
+      "id": "node-build-meeting-meta",
+      "name": "Build Meeting Meta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const MS_PER_DAY = 1000 * 60 * 60 * 24;\n\nconst determineSuggestedAction = (meeting, ageDays) => {\n  if (!meeting.hasOut) return 'CHECK_MEETING';\n  if (meeting.hasRaw && ageDays > 30) return 'REVIEW_RAW_FOR_DELETION';\n  return 'KEEP';\n};\n\nconst now = new Date();\nconst generatedAt = now.toISOString();\n\nconst meetings = items.map((item) => {\n  const meeting = item.json;\n  const ageDays = Math.floor((now.getTime() - new Date(meeting.lastModified).getTime()) / MS_PER_DAY);\n  return {\n    ...meeting,\n    ageDays,\n    suggestedAction: determineSuggestedAction(meeting, ageDays),\n  };\n});\n\nreturn [\n  {\n    json: {\n      generatedAt,\n      meetings,\n    },\n  },\n];"
+      },
+      "id": "node-build-retention-report",
+      "name": "Build Retention Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const reportsPath = $json.reportsPath || '/Meetings/_reports/';\nconst dateStr = new Date().toISOString().split('T')[0];\nconst reportPath = `${reportsPath}retention-report_${dateStr}.json`;\n\nreturn [\n  {\n    json: {\n      ...$json,\n      reportPath,\n      reportBody: JSON.stringify($json, null, 2),\n    },\n  },\n];"
+      },
+      "id": "node-build-report-path",
+      "name": "Build Report Path",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "path": "={{$json.reportPath}}",
+        "binaryData": false,
+        "fileContent": "={{$json.reportBody}}",
+        "options": {
+          "createDirectories": true
+        }
+      },
+      "id": "node-webdav-upload-report",
+      "name": "Upload Retention Report",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        1740,
+        300
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "",
+          "name": "WebDAV account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "",
+        "toEmail": "",
+        "subject": "WF5 Retention Report",
+        "text": "Retention report generated at {{$json.generatedAt}}\\nMeetings: {{ $json.meetings.length }}\\nReview candidates: {{ $json.meetings.filter(m => m.suggestedAction === 'REVIEW_RAW_FOR_DELETION').length }}\\nMissing output: {{ $json.meetings.filter(m => m.suggestedAction === 'CHECK_MEETING').length }}\\nReport path: {{$json.reportPath}}"
+      },
+      "id": "node-send-email",
+      "name": "Send Retention Report Mail",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        300
+      ],
+      "disabled": true,
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP Account (Placeholder)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set WF5 Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Schedule (03:00)": {
+      "main": [
+        [
+          {
+            "node": "Set WF5 Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set WF5 Config": {
+      "main": [
+        [
+          {
+            "node": "List Meetings Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Meetings Folder": {
+      "main": [
+        [
+          {
+            "node": "Filter Meeting Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Meeting Folders": {
+      "main": [
+        [
+          {
+            "node": "Build Meeting Meta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Meeting Meta": {
+      "main": [
+        [
+          {
+            "node": "Build Retention Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Retention Report": {
+      "main": [
+        [
+          {
+            "node": "Build Report Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report Path": {
+      "main": [
+        [
+          {
+            "node": "Upload Retention Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Retention Report": {
+      "main": [
+        [
+          {
+            "node": "Send Retention Report Mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "",
+    "description": "WF5 Lite builds a retention transparency report for MEET; no delete or move operations, only WebDAV reads and report upload."
+  },
+  "id": "wf5-retention-lite",
+  "tags": [
+    {
+      "name": "MEET",
+      "createdAt": "2025-12-05T00:00:00.000Z",
+      "updatedAt": "2025-12-05T00:00:00.000Z"
+    }
+  ]
+}

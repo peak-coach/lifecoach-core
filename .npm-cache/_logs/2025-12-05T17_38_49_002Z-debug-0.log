@@ -1,0 +1,18 @@
+0 verbose cli /usr/local/bin/node /usr/local/bin/npm
+1 info using npm@11.6.2
+2 info using node@v25.2.1
+3 silly config load:file:/usr/local/lib/node_modules/npm/npmrc
+4 silly config load:file:/Users/kelvinfaller/Desktop/lifecoach-core/backend/.npmrc
+5 silly config load:file:/Users/kelvinfaller/.npmrc
+6 silly config load:file:/usr/local/etc/npmrc
+7 verbose title npm test --reporter=basic
+8 verbose argv "test" "--" "--reporter=basic"
+9 verbose logfile logs-max:10 dir:/Users/kelvinfaller/Desktop/lifecoach-core/.npm-cache/_logs/2025-12-05T17_38_49_002Z-
+10 verbose logfile /Users/kelvinfaller/Desktop/lifecoach-core/.npm-cache/_logs/2025-12-05T17_38_49_002Z-debug-0.log
+11 silly logfile done cleaning log files
+12 verbose cwd /Users/kelvinfaller/Desktop/lifecoach-core/backend
+13 verbose os Darwin 24.6.0
+14 verbose node v25.2.1
+15 verbose npm  v11.6.2
+16 verbose exit 1
+17 verbose code 1

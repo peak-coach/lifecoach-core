@@ -1,0 +1,141 @@
+{
+  "timestamp": "2025-12-06T19:43:14.830Z",
+  "workflow": {
+    "name": "WF 3 Tasks nach SeaTable",
+    "id": "FppaMtEzgfdgMqe8",
+    "validation": {
+      "valid": true,
+      "issues": [],
+      "warnings": [
+        "⚠️  Workflow ist nicht aktiv (active: false)",
+        "⚠️  API Token ist im Workflow hardcoded (Sicherheitsrisiko)"
+      ]
+    }
+  },
+  "testCases": [
+    {
+      "testCase": "TC1",
+      "name": "Valider Workflow mit Standard todos.json",
+      "passed": true,
+      "issues": [],
+      "details": {}
+    },
+    {
+      "testCase": "TC2",
+      "name": "Workflow mit mehreren Tasks",
+      "passed": true,
+      "issues": [],
+      "details": {}
+    },
+    {
+      "testCase": "TC3",
+      "name": "Workflow mit Update-Operation",
+      "passed": true,
+      "issues": [],
+      "details": {}
+    },
+    {
+      "testCase": "TC4",
+      "name": "Workflow mit leerem tasks Array",
+      "passed": true,
+      "issues": [],
+      "details": {}
+    },
+    {
+      "testCase": "TC5",
+      "name": "Workflow mit verschiedenen Status-Werten",
+      "passed": true,
+      "issues": [],
+      "details": {
+        "status_open": {
+          "input": "open",
+          "expected": "todo",
+          "note": "Sollte normalisiert werden zu: todo"
+        },
+        "status_done": {
+          "input": "done",
+          "expected": "done",
+          "note": "Sollte normalisiert werden zu: done"
+        },
+        "status_in_progress": {
+          "input": "in_progress",
+          "expected": "todo",
+          "note": "Sollte normalisiert werden zu: todo"
+        }
+      }
+    },
+    {
+      "testCase": "TC6",
+      "name": "Workflow mit fehlenden Pflichtfeldern",
+      "passed": true,
+      "issues": [],
+      "details": {}
+    },
+    {
+      "testCase": "TC7",
+      "name": "Workflow mit v1 Format (todos statt tasks)",
+      "passed": true,
+      "issues": [],
+      "details": {}
+    },
+    {
+      "testCase": "TC8",
+      "name": "Workflow mit assignee als String (v1)",
+      "passed": true,
+      "issues": [],
+      "details": {}
+    },
+    {
+      "testCase": "TC9",
+      "name": "Workflow mit ungültigem JSON",
+      "passed": true,
+      "issues": [],
+      "details": {}
+    },
+    {
+      "testCase": "TC10",
+      "name": "Workflow mit fehlendem tasks/todos Array",
+      "passed": true,
+      "issues": [],
+      "details": {}
+    }
+  ],
+  "screenshotComparison": {
+    "match": true,
+    "comparisons": [
+      {
+        "check": "Tabellenname",
+        "expected": "todos_v1",
+        "actual": "todos_v1",
+        "match": true
+      },
+      {
+        "check": "Spalten",
+        "expected": "todo_id, meeting_id, who, what, due, status, created_at",
+        "actual": "todo_id, meeting_id, who, what, due, status, created_at",
+        "match": true
+      },
+      {
+        "check": "Status-Normalisierung",
+        "expected": "Alle Status sollten zu \"todo\" normalisiert werden (außer \"done\")",
+        "actual": "Workflow normalisiert: open→todo, in_progress→todo, done→done",
+        "match": true,
+        "note": "Workflow-Logik entspricht Screenshot (alle zeigen \"todo\")"
+      },
+      {
+        "check": "Due-Dates Format",
+        "expected": "YYYY-MM-DD Format (z.B. 2023-10-11, 2025-11-30)",
+        "actual": "Workflow verwendet: String(task.due).slice(0, 10)",
+        "match": true,
+        "note": "Workflow extrahiert korrekt das Datum"
+      }
+    ]
+  },
+  "summary": {
+    "workflowValid": true,
+    "testsPassed": 10,
+    "testsTotal": 10,
+    "screenshotMatch": true,
+    "overallPass": true
+  }
+}

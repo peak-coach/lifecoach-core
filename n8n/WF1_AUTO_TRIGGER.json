@@ -1,0 +1,251 @@
+{
+  "name": "WF1 Auto Trigger (Nextcloud Audio Polling)",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "unit": "minutes",
+              "value": 2
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron - every 2 min",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -1600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "directory",
+        "operation": "list",
+        "path": "=={{ `/Meetings/Audio` }}",
+        "options": {
+          "depth": 1
+        }
+      },
+      "id": "list-audio",
+      "name": "List Audio Folder",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -1390,
+        0
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Keep only files (not directories) in Meetings/Audio\n// Skip already processed files (in processed/ or *.processed)\nconst item = $json;\nconst isDir = item.type === 'directory' || item.isDirectory === true;\nif (isDir) {\n  return null;\n}\n\nconst path = item.path || item.filepath || item.filename || '';\nif (!path) return null;\n\n// Skip processed folder\nif (path.includes('/processed/')) return null;\n// Skip files that look marked as processed\nif (path.endsWith('.processed')) return null;\n\nreturn { json: { path, name: item.basename || item.filename || path.split('/').pop() } };"
+      },
+      "id": "filter-files",
+      "name": "Filter New Files",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Build meeting + payload using public share link\n// Expected: file from Meetings/Audio, with public share id\n\nconst filePathRaw = $json.path;\nconst fileName = $json.name || (filePathRaw || '').split('/').pop() || 'audio.m4a';\nconst baseName = fileName.replace(/\\.[^/.]+$/, '');\n\n// Create slug in format: 2025/12/08 - Meeting Name\nconst now = new Date();\nconst year = now.getFullYear();\nconst month = String(now.getMonth() + 1).padStart(2, '0');\nconst day = String(now.getDate()).padStart(2, '0');\nconst slug = `${year}/${month}/${day} - ${baseName}`;\nconst title = baseName;\nconst datetime = now.toISOString();\n\n// Public share ID (set to your share link)\nconst shareId = $env.NC_SHARE_ID || '4H8cnFoTgpDxnrH';\nconst audioUrl = `https://files.bovps.de/s/${shareId}/download?path=/&files=${encodeURIComponent(fileName)}`;\n\n// WebDAV-relative Pfad für internen Download\nconst filePath = `Meetings/Audio/${fileName}`;\n\nconst meeting = {\n  slug,\n  title,\n  datetime,\n  language: 'de'\n};\n\nconst body = {\n  meeting,\n  audioUrl,\n  filePath,\n  source: 'nextcloud-auto'\n};\n\nconst rawBody = JSON.stringify(body);\nconst timestamp = Math.floor(Date.now() / 1000);\nconst nonce = `nc-auto-${timestamp}-${Math.random().toString(16).slice(2, 8)}`;\n\nreturn {\n  json: {\n    body,\n    rawBody,\n    timestamp,\n    nonce,\n    filePath,\n    fileName,\n    meeting\n  }\n};"
+      },
+      "id": "build-payload",
+      "name": "Build Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -970,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\nconst rawBody = $json.rawBody;\nconst timestamp = $json.timestamp;\nconst nonce = $json.nonce;\nconst secret = $env.HMAC_SECRET || '';\n\nlet signature = 'sha256=dummy';\nif (secret) {\n  signature = 'sha256=' + crypto.createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');\n}\n\nreturn {\n  json: {\n    ...$json,\n    headers: {\n      'x-signature-256': signature,\n      'x-timestamp': String(timestamp),\n      'x-nonce': nonce\n    }\n  }\n};"
+      },
+      "id": "sign-request",
+      "name": "Sign HMAC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WF1_INGEST_URL || 'https://ops.bovps.de/webhook/wf1/ingest' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-signature-256",
+              "value": "={{ $json.headers['x-signature-256'] }}"
+            },
+            {
+              "name": "x-timestamp",
+              "value": "={{ String($json.headers['x-timestamp']) }}"
+            },
+            {
+              "name": "x-nonce",
+              "value": "={{ $json.headers['x-nonce'] }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "call-wf1",
+      "name": "Trigger WF1 Ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "move",
+        "path": "={{ $json.filePath }}",
+        "newPath": "={{ `/Meetings/Audio/processed/${$json.fileName}` }}"
+      },
+      "id": "move-processed",
+      "name": "Move to processed/",
+      "type": "n8n-nodes-webdav.webDav",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        -80
+      ],
+      "credentials": {
+        "webDavApi": {
+          "id": "KVXqSvtu01ub8urv",
+          "name": "WebDAV account"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return { json: { status: 'error', error: $json } };"
+      },
+      "id": "capture-error",
+      "name": "Capture Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Cron - every 2 min": {
+      "main": [
+        [
+          {
+            "node": "List Audio Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Audio Folder": {
+      "main": [
+        [
+          {
+            "node": "Filter New Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Files": {
+      "main": [
+        [
+          {
+            "node": "Build Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Payload": {
+      "main": [
+        [
+          {
+            "node": "Sign HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign HMAC": {
+      "main": [
+        [
+          {
+            "node": "Trigger WF1 Ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger WF1 Ingest": {
+      "main": [
+        [
+          {
+            "node": "Move to processed/",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Capture Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "id": "wf1-auto-trigger"
+}
+

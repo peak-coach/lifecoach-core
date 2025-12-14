@@ -1,0 +1,33 @@
+{
+  "name": "peak-coach",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Peak Performance Coach - AI-powered Life & Performance Coaching System",
+  "author": "Kevin Faller",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:web": "turbo dev --filter=@peak-coach/web",
+    "dev:bot": "turbo dev --filter=@peak-coach/telegram-bot",
+    "build": "turbo build",
+    "build:web": "turbo build --filter=@peak-coach/web",
+    "build:bot": "turbo build --filter=@peak-coach/telegram-bot",
+    "start": "turbo start",
+    "lint": "turbo lint",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
+    "db:generate": "supabase gen types typescript --project-id $SUPABASE_PROJECT_ID > packages/shared/src/types/database.ts",
+    "clean": "turbo clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "prettier": "^3.1.0",
+    "turbo": "^1.11.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.10.0"
+}
+

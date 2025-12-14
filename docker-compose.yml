@@ -1,0 +1,106 @@
+# ============================================
+# LifeCoach Core - Docker Compose Stack
+# ============================================
+# Usage:
+#   cp env.example .env
+#   # Fill in your values in .env
+#   docker-compose up -d
+# ============================================
+
+services:
+  # LifeCoach Core API
+  lifecoach-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lifecoach-api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=3000
+      # Notion
+      - NOTION_API_KEY=${NOTION_API_KEY:-}
+      - NOTION_DB_TASKS_ID=${NOTION_DB_TASKS_ID:-}
+      - NOTION_DB_DAILYLOG_ID=${NOTION_DB_DAILYLOG_ID:-}
+      - NOTION_DB_AREAS_ID=${NOTION_DB_AREAS_ID:-}
+      - NOTION_DB_PRINCIPLES_ID=${NOTION_DB_PRINCIPLES_ID:-}
+      # LLM
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      # Telegram
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      # Internal
+      - LIFECOACH_API_BASE_URL=${LIFECOACH_API_BASE_URL:-http://lifecoach-api:3000}
+    networks:
+      - lifecoach-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # PostgreSQL Database (for later phases - RAG, logs, etc.)
+  postgres:
+    image: postgres:16-alpine
+    container_name: lifecoach-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-lifecoach}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=${POSTGRES_DB:-lifecoach}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - lifecoach-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-lifecoach} -d ${POSTGRES_DB:-lifecoach}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # n8n Workflow Automation (uncomment when needed)
+  # n8n:
+  #   image: n8nio/n8n:latest
+  #   container_name: lifecoach-n8n
+  #   restart: unless-stopped
+  #   ports:
+  #     - "${N8N_PORT:-5678}:5678"
+  #   environment:
+  #     - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE:-true}
+  #     - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+  #     - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-changeme}
+  #     - N8N_HOST=${N8N_HOST:-localhost}
+  #     - N8N_PORT=5678
+  #     - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+  #     - WEBHOOK_URL=http://${N8N_HOST:-localhost}:${N8N_PORT:-5678}/
+  #     - GENERIC_TIMEZONE=Europe/Berlin
+  #     - DB_TYPE=postgresdb
+  #     - DB_POSTGRESDB_HOST=postgres
+  #     - DB_POSTGRESDB_PORT=5432
+  #     - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-lifecoach}
+  #     - DB_POSTGRESDB_USER=${POSTGRES_USER:-lifecoach}
+  #     - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+  #   volumes:
+  #     - n8n-data:/home/node/.n8n
+  #   networks:
+  #     - lifecoach-network
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+
+networks:
+  lifecoach-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  # n8n-data:

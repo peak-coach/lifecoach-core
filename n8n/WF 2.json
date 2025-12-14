@@ -1,0 +1,811 @@
+{
+    "name": "WF2 – Summarize & todos.json",
+    "nodes": [
+      {
+        "parameters": {},
+        "id": "7ff1eb3e-eca9-44aa-a993-2241b3f41009",
+        "name": "When executed by another workflow",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1,
+        "position": [
+          -1824,
+          48
+        ]
+      },
+      {
+        "parameters": {
+          "fields": {
+            "values": [
+              {
+                "name": "transcript_path",
+                "stringValue": "={{ $json.paths?.transcript \n  || $json.files?.transcript \n  || ($json.baseDir ? $json.baseDir + 'out/transcript.txt' : '') }}"
+              },
+              {
+                "name": "summary_path",
+                "stringValue": "={{ $json.paths?.out \n  ? $json.paths.out + '/summary.md' \n  : ($json.baseDir \n      ? $json.baseDir + 'out/summary.md' \n      : ($json.files?.transcript \n          ? $json.files.transcript.replace(/transcript\\.txt$/, 'summary.md') \n          : '')) }}"
+              },
+              {
+                "name": "todos_path",
+                "stringValue": "={{ $json.paths?.out \n  ? $json.paths.out + '/todos.json' \n  : ($json.baseDir \n      ? $json.baseDir + 'out/todos.json' \n      : ($json.files?.transcript \n          ? $json.files.transcript.replace(/transcript\\.txt$/, 'todos.json') \n          : '')) }}"
+              },
+              {
+                "name": "dlq_path",
+                "stringValue": "={{ $json.paths?.dlq \n  || ($json.baseDir ? $json.baseDir + 'dlq' \n  : ($json.files?.transcript \n      ? $json.files.transcript.replace(/out\\/transcript\\.txt$/, 'dlq/') \n      : '')) }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "013edb86-fa79-46e5-ba66-416295f9f958",
+        "name": "Set Paths",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3,
+        "position": [
+          -1616,
+          48
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "download",
+          "path": "={{$json.transcript_path}}"
+        },
+        "id": "bb3a6e5f-f2b2-4d60-b3fb-2dfb7cc06320",
+        "name": "Read transcript.txt",
+        "type": "n8n-nodes-base.nextCloud",
+        "typeVersion": 1,
+        "position": [
+          -1424,
+          48
+        ],
+        "credentials": {
+          "nextCloudApi": {
+            "id": "A7eo6Qd3GzmPPqvZ",
+            "name": "NextCloud account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Transcript aus dem Nextcloud-Download extrahieren\nconst item = $input.first();\nconst pathsSource = $item(0).$node['Set Paths']?.json || {};\n\nlet transcript = '';\n\n// 1) Bevorzugt: Binary-Data aus Nextcloud\nif (item.binary && item.binary.data) {\n  const bin = item.binary.data;\n  const base64 = typeof bin === 'string' ? bin : bin.data;\n  transcript = typeof base64 === 'string'\n    ? Buffer.from(base64, 'base64').toString('utf8')\n    : (base64?.toString?.('utf8') || '');\n\n// 2) Fallback: Transcript steht direkt im JSON (z.B. bei Tests)\n} else if (item.json && item.json.data) {\n  transcript = item.json.data || '';\n}\n\n// 3) Ergebnis-Item bauen, inkl. Pfade aus \"Set Paths\", damit nachfolgende Nodes sie sicher haben\nreturn {\n  json: {\n    transcript,\n    meeting_id: item.json.meeting_id || pathsSource.meeting_id,\n    baseDir: item.json.baseDir || pathsSource.baseDir,\n    language: item.json.language || 'de',\n    transcript_path: item.json.transcript_path || pathsSource.transcript_path,\n    summary_path: item.json.summary_path || pathsSource.summary_path,\n    todos_path: item.json.todos_path || pathsSource.todos_path,\n    dlq_path: item.json.dlq_path || pathsSource.dlq_path,\n  },\n};\n"
+        },
+        "id": "d47add4a-a650-4496-b7c0-c5ce91e02e11",
+        "name": "Extract Transcript",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1216,
+          48
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "string": [
+              {
+                "value1": "={{ $json.transcript }}",
+                "operation": "isNotEmpty"
+              },
+              {
+                "value1": "={{ $json.transcript.length }}",
+                "operation": "largerEqual",
+                "value2": "10"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "5fbdf5b0-a6f1-4086-9c72-62ee4583d447",
+        "name": "Check Transcript Valid",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -1024,
+          48
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/chat/completions",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "openAiApi",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "model",
+                "value": "gpt-4o-2024-08-06"
+              },
+              {
+                "name": "=messages",
+                "value": "={{\n  [\n    {\n      role: \"system\",\n      content: \"Du bist ein professioneller Meeting-Assistent. Erstelle aus dem Meeting-Transkript eine strukturierte Zusammenfassung und UTS-v2-konforme Todos.\"\n    },\n    {\n      role: \"user\",\n      content:\n        \"Meeting-ID: \" + $json.meeting_id +\n        \"\\nSprache: \" + $json.language +\n        \"\\n\\nTranskript:\\n\" + $json.transcript\n    }\n  ]\n}}"
+              },
+              {
+                "name": "=response_format",
+                "value": "={{\n  {\n    type: \"json_schema\",\n    json_schema: {\n      name: \"meeting_summary_schema\",\n      strict: true,\n      schema: {\n        type: \"object\",\n        additionalProperties: false,\n        properties: {\n          summary_md: {\n            type: \"string\",\n            description: \"Markdown-formatierte Zusammenfassung des Meetings\"\n          },\n          todos: {\n            type: \"object\",\n            additionalProperties: false,\n            properties: {\n              meeting_id:   { type: \"string\" },\n              generated_at: { type: \"string\" },\n              language:     { type: \"string\" },\n              todos: {\n                type: \"array\",\n                items: {\n                  type: \"object\",\n                  additionalProperties: false,\n                  properties: {\n                    uid:         { type: \"string\" },\n                    title:       { type: \"string\" },\n                    description: { type: \"string\" },\n                    assignee:    { type: \"string\" },\n                    due:         { type: \"string\" },\n                    priority: {\n                      type: \"string\",\n                      enum: [\"low\", \"medium\", \"high\"]\n                    },\n                    status: {\n                      type: \"string\",\n                      enum: [\"open\", \"in_progress\", \"done\"]\n                    }\n                  },\n                  required: [\n                    \"uid\",\n                    \"title\",\n                    \"description\",\n                    \"assignee\",\n                    \"due\",\n                    \"priority\",\n                    \"status\"\n                  ]\n                }\n              }\n            },\n            required: [\"meeting_id\", \"generated_at\", \"language\", \"todos\"]\n          }\n        },\n        required: [\"summary_md\", \"todos\"]\n      }\n    }\n  }\n}}"
+              },
+              {
+                "name": "temperature",
+                "value": "={{0.3}}"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "id": "92475ebb-8410-46e0-9335-fd92e78351ce",
+        "name": "OpenAI Structured Outputs",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -768,
+          -64
+        ],
+        "credentials": {
+          "openAiApi": {
+            "id": "4rCMHmASWu5ey9ho",
+            "name": "OpenAi account"
+          }
+        },
+        "continueOnFail": true
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "id": "http-status-check",
+                "leftValue": "={{ $json.object }}",
+                "rightValue": "=chat.completion",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "fe885184-743d-4c5b-b741-020271f3bd12",
+        "name": "Check HTTP Success",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -576,
+          -64
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Create DLQ error entry for HTTP/network errors\nconst items = $input.all();\nconst response = items[0].json;\nconst timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\\./g, '-');\n\n// Extract error details\nconst statusCode = response.statusCode || 'unknown';\nconst responseBody = JSON.stringify(response).substring(0, 500); // Limit to 500 chars\n\nconst errorData = {\n  workflow: 'WF2',\n  error_code: 'WF2_LLM_HTTP_ERROR',\n  timestamp: new Date().toISOString(),\n  meeting_id: items[0].json.meeting_id,\n  baseDir: items[0].json.baseDir,\n  status_code: statusCode,\n  response_body: responseBody,\n  message: 'OpenAI HTTP request failed after retries'\n};\n\nreturn {\n  json: {\n    ...items[0].json,\n    dlq_filename: `wf2_error_llm_http_${timestamp}.json`,\n    dlq_content: JSON.stringify(errorData, null, 2)\n  }\n};"
+        },
+        "id": "d28fab72-6a9a-4d18-b689-9998c0bfdd6c",
+        "name": "Create DLQ Entry - HTTP Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -368,
+          96
+        ]
+      },
+      {
+        "parameters": {
+          "path": "=/Meetings/2025/11/17 - KI B Test/dlq/wf2_http_debug.json",
+          "fileContent": "={{JSON.stringify($json, null, 2)}}"
+        },
+        "id": "b5f6b9e8-7c63-42a3-ba67-efb7eeec8ff1",
+        "name": "Write DLQ - HTTP Error",
+        "type": "n8n-nodes-base.nextCloud",
+        "typeVersion": 1,
+        "position": [
+          -176,
+          96
+        ],
+        "credentials": {
+          "nextCloudApi": {
+            "id": "A7eo6Qd3GzmPPqvZ",
+            "name": "NextCloud account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Parse OpenAI response with robust error handling (try/catch)\nconst items = $input.all();\nconst response = items[0].json;\n\n// Get paths from Set Paths node (they get lost after OpenAI call)\nconst pathsNode = $item(0).$node['Set Paths']?.json || {};\nconst extractNode = $item(0).$node['Extract Transcript']?.json || {};\n\nconst meeting_id = extractNode.meeting_id || pathsNode.meeting_id || '';\nconst baseDir = extractNode.baseDir || pathsNode.baseDir || '';\nconst summary_path = extractNode.summary_path || pathsNode.summary_path || '';\nconst todos_path = extractNode.todos_path || pathsNode.todos_path || '';\nconst dlq_path = extractNode.dlq_path || pathsNode.dlq_path || '';\nconst language = extractNode.language || pathsNode.language || 'de';\n\ntry {\n  // Validate response structure\n  if (!response || !response.choices || !response.choices[0] || !response.choices[0].message) {\n    throw new Error('Invalid OpenAI response structure');\n  }\n\n  // Parse JSON content with error handling\n  const content = JSON.parse(response.choices[0].message.content);\n\n  // Validate required fields from LLM output\n  if (!content.summary_md) {\n    throw new Error('Missing summary_md in LLM output');\n  }\n  if (!content.todos) {\n    throw new Error('Missing todos object in LLM output');\n  }\n\n  // Prepare todos.json with meeting_id and generated_at\n  const todosJson = {\n    meeting_id: meeting_id,\n    generated_at: new Date().toISOString(),\n    language: language,\n    todos: content.todos.todos || []\n  };\n\n  return {\n    json: {\n      meeting_id: meeting_id,\n      baseDir: baseDir,\n      summary_path: summary_path,\n      todos_path: todos_path,\n      dlq_path: dlq_path,\n      language: language,\n      summary_md: content.summary_md,\n      todos_json: JSON.stringify(todosJson, null, 2),\n      todos_object: todosJson,\n      parse_success: true\n    }\n  };\n\n} catch (error) {\n  // JSON parse failed or structure invalid → prepare for DLQ\n  const llmRawContent = (response?.choices?.[0]?.message?.content || JSON.stringify(response)).substring(0, 1000);\n  \n  return {\n    json: {\n      meeting_id: meeting_id,\n      baseDir: baseDir,\n      dlq_path: dlq_path,\n      parse_success: false,\n      parse_error: error.message,\n      llm_raw_content: llmRawContent\n    }\n  };\n}"
+        },
+        "id": "920e4efa-f66b-4926-8a08-a0846eb59af3",
+        "name": "Parse LLM Response",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -368,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{ $json.parse_success }}",
+                "value2": true
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "75b09673-d5f4-4714-a14b-e8ca70766d6b",
+        "name": "Check Parse Success",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -176,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Create DLQ error entry for JSON parse failure\nconst items = $input.all();\nconst timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\\./g, '-');\n\nconst errorData = {\n  workflow: 'WF2',\n  error_code: 'WF2_LLM_JSON_INVALID',\n  timestamp: new Date().toISOString(),\n  meeting_id: items[0].json.meeting_id,\n  baseDir: items[0].json.baseDir,\n  parse_error: items[0].json.parse_error,\n  llm_raw_content: items[0].json.llm_raw_content,\n  message: 'Failed to parse LLM JSON output'\n};\n\nreturn {\n  json: {\n    ...items[0].json,\n    dlq_filename: `wf2_error_llm_json_${timestamp}.json`,\n    dlq_content: JSON.stringify(errorData, null, 2)\n  }\n};"
+        },
+        "id": "d470bae1-7937-49c7-8d9b-b48196ef0ad5",
+        "name": "Create DLQ Entry - JSON Parse",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          32,
+          -16
+        ]
+      },
+      {
+        "parameters": {
+          "path": "={{ $json.dlq_path + $json.dlq_filename }}",
+          "fileContent": "={{ $json.dlq_content }}"
+        },
+        "id": "796a3d16-9145-4634-a91b-7fa1a557c949",
+        "name": "Write DLQ - JSON Parse",
+        "type": "n8n-nodes-base.nextCloud",
+        "typeVersion": 1,
+        "position": [
+          240,
+          -16
+        ],
+        "credentials": {
+          "nextCloudApi": {
+            "id": "A7eo6Qd3GzmPPqvZ",
+            "name": "NextCloud account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Validate UTS-v2 structure\n// UTS-v2 Requirements:\n// - meeting_id (string, required)\n// - generated_at (ISO timestamp, required)\n// - language (string, required)\n// - todos (array, required)\n// - todos[].what (string, required for each todo)\n\nconst items = $input.all();\nconst todos = items[0].json.todos_object;\n\n// Validation checks\nconst errors = [];\n\nif (!todos.meeting_id) errors.push('Missing meeting_id');\nif (!todos.generated_at) errors.push('Missing generated_at');\nif (!todos.language) errors.push('Missing language');\nif (!Array.isArray(todos.todos)) errors.push('todos must be an array');\n\n// Validate each todo (what is mandatory per UTS-v2)\nif (Array.isArray(todos.todos)) {\n  todos.todos.forEach((todo, index) => {\n    if (!todo.what) {\n      errors.push(`Todo ${index}: Missing required field 'what'`);\n    }\n  });\n}\n\nreturn {\n  json: {\n    ...items[0].json,\n    validation_passed: errors.length === 0,\n    validation_errors: errors\n  }\n};"
+        },
+        "id": "4e9c6463-53ff-4a07-a03d-a79abbd8f497",
+        "name": "Validate UTS-v2",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          32,
+          -208
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "boolean": [
+              {
+                "value1": "={{ $json.validation_passed }}",
+                "value2": true
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "029a5106-230a-4d4e-b9eb-aa6399778bec",
+        "name": "Check Validation",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          240,
+          -208
+        ]
+      },
+      {
+        "parameters": {
+          "path": "={{ $json.summary_path || $node[\"Set Paths\"].json.summary_path }}",
+          "fileContent": "={{ $json.summary_md }}"
+        },
+        "id": "6b1839ad-6d02-4d4c-8e8d-014973972aca",
+        "name": "Write summary.md",
+        "type": "n8n-nodes-base.nextCloud",
+        "typeVersion": 1,
+        "position": [
+          480,
+          -208
+        ],
+        "credentials": {
+          "nextCloudApi": {
+            "id": "A7eo6Qd3GzmPPqvZ",
+            "name": "NextCloud account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "path": "={{ $json.todos_path || $node[\"Set Paths\"].json.todos_path }}",
+          "fileContent": "={{ $json.todos_json || $item(0).$node[\"Parse LLM Response\"].json.todos_json }}"
+        },
+        "id": "6ba261af-40b2-48e7-bd9a-be3250b4b1f3",
+        "name": "Write todos.json",
+        "type": "n8n-nodes-base.nextCloud",
+        "typeVersion": 1,
+        "position": [
+          688,
+          -208
+        ],
+        "credentials": {
+          "nextCloudApi": {
+            "id": "A7eo6Qd3GzmPPqvZ",
+            "name": "NextCloud account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Create DLQ error entry for empty/invalid transcript\nconst items = $input.all();\nconst timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\\./g, '-');\n\nconst errorData = {\n  workflow: 'WF2',\n  error_code: 'WF2_EMPTY_TRANSCRIPT',\n  timestamp: new Date().toISOString(),\n  meeting_id: items[0].json.meeting_id,\n  baseDir: items[0].json.baseDir,\n  transcript_length: items[0].json.transcript?.length || 0,\n  message: 'Transcript is empty or too short (< 10 characters)'\n};\n\nreturn {\n  json: {\n    ...items[0].json,\n    dlq_filename: `wf2_error_empty_${timestamp}.json`,\n    dlq_content: JSON.stringify(errorData, null, 2)\n  }\n};"
+        },
+        "id": "9b15e625-9f07-41dd-8e27-723b7092da3a",
+        "name": "Create DLQ Entry - Empty",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -768,
+          192
+        ]
+      },
+      {
+        "parameters": {
+          "path": "={{ $json.dlq_path + $json.dlq_filename }}",
+          "fileContent": "={{ $json.dlq_content }}"
+        },
+        "id": "662e6d74-9c04-4b57-8be6-643ff955d6bf",
+        "name": "Write DLQ - Empty",
+        "type": "n8n-nodes-base.nextCloud",
+        "typeVersion": 1,
+        "position": [
+          -576,
+          192
+        ],
+        "credentials": {
+          "nextCloudApi": {
+            "id": "A7eo6Qd3GzmPPqvZ",
+            "name": "NextCloud account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Create DLQ error entry for validation failure\nconst items = $input.all();\nconst timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\\./g, '-');\n\nconst errorData = {\n  workflow: 'WF2',\n  error_code: 'WF2_UTS_VALIDATION_FAILED',\n  timestamp: new Date().toISOString(),\n  meeting_id: items[0].json.meeting_id,\n  baseDir: items[0].json.baseDir,\n  validation_errors: items[0].json.validation_errors,\n  llm_output: items[0].json.todos_json,\n  message: 'UTS-v2 validation failed'\n};\n\nreturn {\n  json: {\n    ...items[0].json,\n    dlq_filename: `wf2_error_validation_${timestamp}.json`,\n    dlq_content: JSON.stringify(errorData, null, 2)\n  }\n};"
+        },
+        "id": "e5b0b858-799c-41ec-91d8-de9fa08d2c2f",
+        "name": "Create DLQ Entry - Validation",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          496,
+          -64
+        ]
+      },
+      {
+        "parameters": {
+          "path": "={{ $json.dlq_path + $json.dlq_filename }}",
+          "fileContent": "={{ $json.dlq_content }}"
+        },
+        "id": "9ebf00c8-48ca-44e2-929a-314ed3cd4fac",
+        "name": "Write DLQ - Validation",
+        "type": "n8n-nodes-base.nextCloud",
+        "typeVersion": 1,
+        "position": [
+          688,
+          -64
+        ],
+        "credentials": {
+          "nextCloudApi": {
+            "id": "A7eo6Qd3GzmPPqvZ",
+            "name": "NextCloud account"
+          }
+        }
+      },
+      {
+        "parameters": {},
+        "id": "e1e57567-c036-44d2-909e-572052c3714e",
+        "name": "NoOp - End DLQ",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          880,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "2a86eaa7-c195-4d62-a48a-fa7480fdeb02",
+                "name": "baseDir",
+                "value": "=  {{ $item(0).$node[\"Set Paths\"].json.baseDir }}",
+                "type": "string"
+              },
+              {
+                "id": "96d3f45c-b9f8-4337-91da-2374184d6a46",
+                "name": "meeting_id",
+                "value": "={{ $item(0).$node[\"Set Paths\"].json.meeting_id }}",
+                "type": "string"
+              },
+              {
+                "id": "a155c97e-1b12-465e-885f-8f87e442abca",
+                "name": "todos_path",
+                "value": "={{ $item(0).$node[\"Set Paths\"].json.todos_path }}",
+                "type": "string"
+              },
+              {
+                "id": "65f1bb32-fbaf-4fc2-aa82-5ce950632c6f",
+                "name": "summary_path",
+                "value": "={{ $item(0).$node[\"Set Paths\"].json.summary_path }}",
+                "type": "string"
+              },
+              {
+                "id": "02484d51-0398-4c5a-b19b-90327cd22f5c",
+                "name": "language",
+                "value": "={{ $item(0).$node[\"Set Paths\"].json.language }}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          864,
+          -208
+        ],
+        "id": "80387c67-409d-49a6-a920-eb90f0924d59",
+        "name": "Prepare WF3 Input"
+      },
+      {
+        "parameters": {
+          "workflowId": {
+            "__rl": true,
+            "value": "FppaMtEzgfdgMqe8",
+            "mode": "list",
+            "cachedResultUrl": "/workflow/FppaMtEzgfdgMqe8",
+            "cachedResultName": "WF 3 Tasks nach SeaTable"
+          },
+          "workflowInputs": {
+            "mappingMode": "defineBelow",
+            "value": {}
+          },
+          "options": {
+            "waitForSubWorkflow": true
+          }
+        },
+        "type": "n8n-nodes-base.executeWorkflow",
+        "typeVersion": 1.3,
+        "position": [
+          1072,
+          -208
+        ],
+        "id": "054a53fb-30a4-483b-9be7-a83616a9052b",
+        "name": "Call 'WF 3 Tasks nach SeaTable'"
+      }
+    ],
+    "pinData": {
+      "When executed by another workflow": [
+        {
+          "json": {
+            "meeting_id": "WF2-TEST-001",
+            "baseDir": "/Meetings/2025/11/17 - KI B Test/",
+            "language": "de"
+          }
+        }
+      ]
+    },
+    "connections": {
+      "When executed by another workflow": {
+        "main": [
+          [
+            {
+              "node": "Set Paths",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Set Paths": {
+        "main": [
+          [
+            {
+              "node": "Read transcript.txt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read transcript.txt": {
+        "main": [
+          [
+            {
+              "node": "Extract Transcript",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Transcript": {
+        "main": [
+          [
+            {
+              "node": "Check Transcript Valid",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Transcript Valid": {
+        "main": [
+          [
+            {
+              "node": "OpenAI Structured Outputs",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Create DLQ Entry - Empty",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "OpenAI Structured Outputs": {
+        "main": [
+          [
+            {
+              "node": "Check HTTP Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check HTTP Success": {
+        "main": [
+          [
+            {
+              "node": "Parse LLM Response",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Create DLQ Entry - HTTP Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse LLM Response": {
+        "main": [
+          [
+            {
+              "node": "Check Parse Success",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Parse Success": {
+        "main": [
+          [
+            {
+              "node": "Validate UTS-v2",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Create DLQ Entry - JSON Parse",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate UTS-v2": {
+        "main": [
+          [
+            {
+              "node": "Check Validation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Validation": {
+        "main": [
+          [
+            {
+              "node": "Write summary.md",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Write todos.json",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Create DLQ Entry - Validation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write summary.md": {
+        "main": [
+          [
+            {
+              "node": "Write todos.json",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write todos.json": {
+        "main": [
+          [
+            {
+              "node": "Prepare WF3 Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create DLQ Entry - Empty": {
+        "main": [
+          [
+            {
+              "node": "Write DLQ - Empty",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write DLQ - Empty": {
+        "main": [
+          [
+            {
+              "node": "NoOp - End DLQ",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create DLQ Entry - HTTP Error": {
+        "main": [
+          [
+            {
+              "node": "Write DLQ - HTTP Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write DLQ - HTTP Error": {
+        "main": [
+          [
+            {
+              "node": "NoOp - End DLQ",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create DLQ Entry - JSON Parse": {
+        "main": [
+          [
+            {
+              "node": "Write DLQ - JSON Parse",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write DLQ - JSON Parse": {
+        "main": [
+          [
+            {
+              "node": "NoOp - End DLQ",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create DLQ Entry - Validation": {
+        "main": [
+          [
+            {
+              "node": "Write DLQ - Validation",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Write DLQ - Validation": {
+        "main": [
+          [
+            {
+              "node": "NoOp - End DLQ",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare WF3 Input": {
+        "main": [
+          [
+            {
+              "node": "Call 'WF 3 Tasks nach SeaTable'",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "versionId": "8bdd670c-1914-4363-a552-8977d3443f01",
+    "meta": {
+      "templateCredsSetupCompleted": true,
+      "instanceId": "5903d2841eda70226ca7b46a7d2dd9a70df78499365b9bbf7149eb7512056f56"
+    },
+    "id": "fOcDDRIBdfOcSm6F",
+    "tags": []
+  }

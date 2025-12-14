@@ -1,0 +1,214 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Earth & Warm Palette */
+    --background: 0 0% 6%;            /* #0F0F0F - Deeper black */
+    --foreground: 40 15% 92%;         /* Warm white */
+
+    --card: 0 0% 9%;                  /* #171717 */
+    --card-foreground: 40 15% 92%;
+
+    --popover: 0 0% 9%;
+    --popover-foreground: 40 15% 92%;
+
+    --primary: 8 72% 56%;             /* #D94F3D Terracotta - kraeftiger */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 35 75% 55%;          /* #D9952A Amber/Gold - kraeftiger */
+    --secondary-foreground: 0 0% 7%;
+
+    --muted: 0 0% 12%;                /* Subtle dark */
+    --muted-foreground: 30 8% 55%;    /* Warm gray text */
+
+    --accent: 30 45% 65%;             /* Amber/Gold */
+    --accent-foreground: 0 0% 7%;
+
+    --success: 30 45% 65%;            /* Amber for success */
+    --success-foreground: 0 0% 7%;
+
+    --warning: 38 92% 50%;            /* Bright Amber */
+    --warning-foreground: 0 0% 7%;
+
+    --destructive: 0 65% 55%;         /* Softer red */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 14%;               /* Subtle border */
+    --input: 0 0% 12%;
+    --ring: 11 63% 62%;
+
+    --radius: 1rem;
+    
+    /* Earth Color Tokens */
+    --terracotta: 8 72% 56%;          /* #D94F3D - kraeftiger */
+    --amber: 35 75% 55%;              /* #D9952A - kraeftiger */
+    --sand: 39 50% 82%;               /* #E8D5B7 */
+    --stone: 25 12% 35%;              /* #574F47 */
+    --charcoal: 0 0% 15%;             /* #262626 */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  html {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    letter-spacing: -0.011em;
+    line-height: 1.6;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.3;
+  }
+  
+  h1 { @apply text-3xl md:text-4xl; }
+  h2 { @apply text-xl md:text-2xl; }
+  h3 { @apply text-lg; }
+}
+
+/* Minimal scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted));
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
+
+/* Smooth transitions - only specific properties */
+button, a, input, [role="button"] {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Gradient text - Terracotta to Amber */
+.gradient-text {
+  background: linear-gradient(135deg, hsl(var(--terracotta)) 0%, hsl(var(--amber)) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Warm glow shadow */
+.shadow-warm {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3),
+              0 4px 16px -2px rgba(217, 79, 61, 0.1);
+}
+
+.shadow-warm-lg {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3),
+              0 8px 32px -4px rgba(224, 122, 95, 0.12);
+}
+
+/* Card hover effect */
+.card-interactive {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px -4px rgba(224, 122, 95, 0.15);
+}
+
+/* Focus styles */
+.focus-warm:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--terracotta));
+}
+
+/* Pulse for streaks/notifications */
+@keyframes pulse-warm {
+  0%, 100% { 
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% { 
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-warm {
+  animation: pulse-warm 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Subtle shine effect */
+@keyframes shine {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shine {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.05) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shine 3s ease-in-out infinite;
+}
+
+/* Number animation */
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-number {
+  animation: count-up 0.5s ease-out forwards;
+}
+
+/* Safe area insets for iPhone notch/home indicator */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Mobile touch optimization */
+@media (hover: none) and (pointer: coarse) {
+  button, a, [role="button"] {
+    /* Larger tap targets on mobile */
+    min-height: 44px;
+  }
+  
+  /* Disable hover effects on touch devices */
+  .card-interactive:hover {
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+/* Prevent text selection on interactive elements */
+button, [role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}

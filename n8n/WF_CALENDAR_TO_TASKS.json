@@ -1,0 +1,307 @@
+{
+  "name": "Kalender → Vorbereitungs-Tasks (Peak Coach)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "triggerAtHour": 18
+            }
+          ]
+        }
+      },
+      "id": "trigger",
+      "name": "Täglich 18:00 Uhr",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "notes": "Läuft jeden Abend um 18:00 - checkt Termine für morgen"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CALDAV_URL }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "id": "caldav-list",
+      "name": "CalDAV: Kalender abrufen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "CALDAV_CREDENTIAL_ID",
+          "name": "Apple Calendar (CalDAV)"
+        }
+      },
+      "notes": "⚠️ CalDAV URL für iCloud:\nhttps://caldav.icloud.com/\n\nCredentials: Apple ID + App-Specific Password"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Kalender-Daten verarbeiten und Termine für morgen filtern\nconst items = $input.all();\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\nconst tomorrowStr = tomorrow.toISOString().split('T')[0];\n\nconst results = [];\n\n// Für Demo: Simulierte Termine (da CalDAV komplex ist)\n// In Production: Parse iCal VEVENT Daten\n\n// Beispiel-Termine für morgen generieren (ersetze mit echten CalDAV-Daten)\nconst events = [\n  // Diese würden aus dem CalDAV Response kommen\n];\n\n// Falls keine Events: Skip\nif (events.length === 0) {\n  return [{ json: { skip: true, message: 'Keine Termine für morgen' } }];\n}\n\nfor (const event of events) {\n  results.push({\n    json: {\n      title: event.summary,\n      start: event.start,\n      end: event.end,\n      location: event.location || null,\n      description: event.description || null,\n      date: tomorrowStr\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "parse-calendar",
+      "name": "Parse Kalender-Daten",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "notes": "Verarbeitet CalDAV/iCal Response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-event",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-events",
+      "name": "Filter: Nur Events",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.3
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Du bist ein produktiver Assistent. Erstelle Vorbereitungs-Tasks für diesen Termin.\n\nTermin morgen:\n- Titel: {{ $json.title }}\n- Zeit: {{ $json.start }} - {{ $json.end }}\n- Ort: {{ $json.location || 'Nicht angegeben' }}\n- Beschreibung: {{ $json.description || 'Keine' }}\n\nErstelle 1-3 konkrete Vorbereitungs-Tasks.\n\nAntworte NUR mit JSON:\n{\n  \"tasks\": [\n    {\n      \"title\": \"Konkrete Vorbereitung\",\n      \"priority\": \"high\" | \"medium\" | \"low\",\n      \"when\": \"today\" | \"tomorrow_morning\",\n      \"estimated_minutes\": 15\n    }\n  ]\n}",
+              "role": "user"
+            }
+          ]
+        }
+      },
+      "id": "generate-prep-tasks",
+      "name": "AI: Vorbereitungs-Tasks",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [1120, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse AI Response für Vorbereitungs-Tasks\nconst items = $input.all();\nconst results = [];\nconst today = new Date().toISOString().split('T')[0];\nconst tomorrow = new Date();\ntomorrow.setDate(tomorrow.getDate() + 1);\nconst tomorrowStr = tomorrow.toISOString().split('T')[0];\n\nfor (const item of items) {\n  try {\n    let content = item.json.message?.content || item.json.text || '';\n    \n    if (content.includes('```')) {\n      content = content.replace(/```json?\\n?/g, '').replace(/```/g, '').trim();\n    }\n    \n    const parsed = JSON.parse(content);\n    \n    if (parsed.tasks && parsed.tasks.length > 0) {\n      for (const task of parsed.tasks) {\n        const scheduledDate = task.when === 'today' ? today : tomorrowStr;\n        \n        results.push({\n          json: {\n            title: task.title,\n            priority: task.priority || 'medium',\n            estimated_minutes: task.estimated_minutes || 15,\n            scheduled_date: scheduledDate,\n            source: 'calendar',\n            event_title: item.json.title || 'Termin'\n          }\n        });\n      }\n    }\n  } catch (e) {\n    console.log('Parse error:', e.message);\n  }\n}\n\nreturn results.length > 0 ? results : [{ json: { skip: true } }];"
+      },
+      "id": "parse-prep-tasks",
+      "name": "Parse Prep Tasks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-task",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-prep",
+      "name": "Filter: Nur Tasks",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tasks",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $env.PEAK_COACH_USER_ID }}",
+            "title": "={{ $json.title }}",
+            "description": "=📅 Vorbereitung für: {{ $json.event_title }}",
+            "priority": "={{ $json.priority }}",
+            "estimated_minutes": "={{ $json.estimated_minutes }}",
+            "scheduled_date": "={{ $json.scheduled_date }}",
+            "status": "pending",
+            "source": "calendar"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "insert-prep-task",
+      "name": "Task in Supabase",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1780, 300],
+      "credentials": {
+        "postgres": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"text\": \"📅 *Vorbereitungs-Task erstellt*\\n\\n📋 {{ $json.title }}\\n🗓️ Für: {{ $json.event_title }}\\n📅 {{ $json.scheduled_date }}\\n⏱️ ~{{ $json.estimated_minutes }} Min\",\n  \"parse_mode\": \"Markdown\"\n}",
+        "options": {}
+      },
+      "id": "telegram-notify",
+      "name": "Telegram Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300]
+    }
+  ],
+  "connections": {
+    "Täglich 18:00 Uhr": {
+      "main": [
+        [
+          {
+            "node": "CalDAV: Kalender abrufen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CalDAV: Kalender abrufen": {
+      "main": [
+        [
+          {
+            "node": "Parse Kalender-Daten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Kalender-Daten": {
+      "main": [
+        [
+          {
+            "node": "Filter: Nur Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Nur Events": {
+      "main": [
+        [
+          {
+            "node": "AI: Vorbereitungs-Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: Vorbereitungs-Tasks": {
+      "main": [
+        [
+          {
+            "node": "Parse Prep Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Prep Tasks": {
+      "main": [
+        [
+          {
+            "node": "Filter: Nur Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Nur Tasks": {
+      "main": [
+        [
+          {
+            "node": "Task in Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task in Supabase": {
+      "main": [
+        [
+          {
+            "node": "Telegram Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Peak Coach"
+    }
+  ],
+  "triggerCount": 1
+}
+
