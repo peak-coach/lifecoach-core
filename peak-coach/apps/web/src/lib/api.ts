@@ -50,6 +50,10 @@ export interface Goal {
   status: 'active' | 'completed' | 'paused' | 'abandoned';
   why_important: string | null;
   created_at: string;
+  // Hierarchy fields
+  goal_type: 'long' | 'short' | 'sprint';
+  parent_goal_id: string | null;
+  timeframe: 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly' | null;
 }
 
 export interface DailyLog {
@@ -317,6 +321,22 @@ export async function createHabit(habit: Partial<Habit> & { user_id: string; nam
     console.error('Error creating habit:', error);
     return null;
   }
+  return data;
+}
+
+export async function updateHabit(habitId: string, updates: Partial<Habit>) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('habits')
+    .update(updates)
+    .eq('id', habitId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating habit:', error);
+    return null;
+  }
 
   console.log('Habit created:', data);
   return data;
@@ -404,6 +424,7 @@ export async function createGoal(goal: Partial<Goal> & { user_id: string; title:
     target_value: goal.target_value || 100,
     current_value: goal.current_value || 0,
     status: goal.status || 'active',
+    goal_type: goal.goal_type || 'long',
   };
   
   const { data, error } = await supabase
@@ -419,6 +440,43 @@ export async function createGoal(goal: Partial<Goal> & { user_id: string; title:
 
   console.log('Goal created:', data);
   return data;
+}
+
+// Get goals with hierarchy
+export async function getGoalsWithHierarchy(userId: string): Promise<Goal[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('goals')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .order('goal_type', { ascending: true }) // long, short, sprint
+    .order('deadline', { ascending: true, nullsFirst: false });
+
+  if (error) {
+    console.error('Error fetching goals:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+// Get child goals
+export async function getChildGoals(parentId: string): Promise<Goal[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('goals')
+    .select('*')
+    .eq('parent_goal_id', parentId)
+    .eq('status', 'active')
+    .order('deadline', { ascending: true, nullsFirst: false });
+
+  if (error) {
+    console.error('Error fetching child goals:', error);
+    return [];
+  }
+
+  return data || [];
 }
 
 export async function updateGoal(goalId: string, updates: Partial<Goal>) {
@@ -658,5 +716,280 @@ export async function getDashboardStats(userId: string) {
       best: streakData?.best_streak || 0,
     },
   };
+}
+
+// ============================================
+// Pomodoro
+// ============================================
+
+export interface PomodoroSession {
+  id: string;
+  user_id: string;
+  task_id: string | null;
+  type: 'work' | 'short_break' | 'long_break';
+  duration_minutes: number;
+  started_at: string;
+  ended_at: string | null;
+  status: 'active' | 'completed' | 'cancelled';
+}
+
+export async function getActivePomodoro(userId: string): Promise<PomodoroSession | null> {
+  const supabase = createClient();
+  const { data } = await supabase
+    .from('pomodoro_sessions')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .is('ended_at', null)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .single();
+  return data;
+}
+
+export async function startPomodoro(
+  userId: string,
+  type: 'work' | 'short_break' | 'long_break',
+  taskId?: string | null,
+  durationMinutes?: number
+): Promise<PomodoroSession | null> {
+  const supabase = createClient();
+  
+  // Default durations
+  const defaultDurations = {
+    work: 25,
+    short_break: 5,
+    long_break: 15,
+  };
+
+  const { data } = await supabase
+    .from('pomodoro_sessions')
+    .insert({
+      user_id: userId,
+      task_id: taskId || null,
+      type,
+      duration_minutes: durationMinutes || defaultDurations[type],
+      started_at: new Date().toISOString(),
+      status: 'active',
+    })
+    .select()
+    .single();
+
+  return data;
+}
+
+export async function stopPomodoro(sessionId: string, status: 'completed' | 'cancelled' = 'cancelled'): Promise<void> {
+  const supabase = createClient();
+  await supabase
+    .from('pomodoro_sessions')
+    .update({
+      status,
+      ended_at: new Date().toISOString(),
+    })
+    .eq('id', sessionId);
+}
+
+export async function getTodayPomodoroStats(userId: string): Promise<{ sessionsCompleted: number; totalMinutes: number }> {
+  const supabase = createClient();
+  const today = new Date().toISOString().split('T')[0];
+  
+  const { data } = await supabase
+    .from('pomodoro_sessions')
+    .select('duration_minutes')
+    .eq('user_id', userId)
+    .eq('type', 'work')
+    .eq('status', 'completed')
+    .gte('started_at', `${today}T00:00:00`)
+    .lte('started_at', `${today}T23:59:59`);
+
+  return {
+    sessionsCompleted: data?.length || 0,
+    totalMinutes: data?.reduce((sum, s) => sum + s.duration_minutes, 0) || 0,
+  };
+}
+
+// ============================================
+// GAMIFICATION API
+// ============================================
+
+// XP Values
+const XP_VALUES = {
+  TASK_COMPLETED: 10,
+  HABIT_COMPLETED: 15,
+  STREAK_DAY: 20,
+  MILESTONE_REACHED: 50,
+  GOAL_COMPLETED: 100,
+  PERFECT_DAY: 30,
+};
+
+// Level thresholds
+const LEVEL_THRESHOLDS = [0, 100, 250, 500, 1000, 2000, 3500, 5500, 8000, 12000];
+
+function calculateLevel(totalXP: number): number {
+  for (let i = LEVEL_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (totalXP >= LEVEL_THRESHOLDS[i]) {
+      return i + 1;
+    }
+  }
+  return 1;
+}
+
+export interface GamificationData {
+  totalXP: number;
+  level: number;
+  badges: string[];
+  todayXP: number;
+  todayEvents: Array<{ type: string; amount: number; description: string }>;
+}
+
+export async function getGamificationData(userId: string): Promise<GamificationData> {
+  const supabase = createClient();
+  const today = new Date().toISOString().split('T')[0];
+  
+  // Get or create user gamification record
+  let { data: gamification } = await supabase
+    .from('user_gamification')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+  
+  // If no record exists, create one
+  if (!gamification) {
+    const { data: newRecord } = await supabase
+      .from('user_gamification')
+      .insert({ user_id: userId })
+      .select()
+      .single();
+    gamification = newRecord;
+  }
+  
+  // Get today's XP events
+  const { data: todayEvents } = await supabase
+    .from('xp_events')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('created_at', `${today}T00:00:00`)
+    .order('created_at', { ascending: false });
+  
+  const todayXP = todayEvents?.reduce((sum, e) => sum + e.xp_amount, 0) || 0;
+  
+  return {
+    totalXP: gamification?.total_xp || 0,
+    level: gamification?.current_level || 1,
+    badges: gamification?.badges || [],
+    todayXP,
+    todayEvents: (todayEvents || []).map(e => ({
+      type: e.event_type,
+      amount: e.xp_amount,
+      description: e.description || e.event_type,
+    })),
+  };
+}
+
+export async function addXPEvent(
+  userId: string,
+  eventType: string,
+  amount: number,
+  description: string,
+  relatedId?: string
+): Promise<{ newXP: number; newLevel: number }> {
+  const supabase = createClient();
+  
+  // Add XP event
+  await supabase
+    .from('xp_events')
+    .insert({
+      user_id: userId,
+      event_type: eventType,
+      xp_amount: amount,
+      description,
+      related_id: relatedId || null,
+    });
+  
+  // Get current gamification data
+  let { data: gamification } = await supabase
+    .from('user_gamification')
+    .select('*')
+    .eq('user_id', userId)
+    .single();
+  
+  // Create if not exists
+  if (!gamification) {
+    const { data: newRecord } = await supabase
+      .from('user_gamification')
+      .insert({ user_id: userId })
+      .select()
+      .single();
+    gamification = newRecord;
+  }
+  
+  const newXP = (gamification?.total_xp || 0) + amount;
+  const newLevel = calculateLevel(newXP);
+  const oldLevel = gamification?.current_level || 1;
+  
+  // Update gamification stats
+  const updates: Record<string, unknown> = {
+    total_xp: newXP,
+    current_level: newLevel,
+    updated_at: new Date().toISOString(),
+  };
+  
+  // Update specific counters based on event type
+  if (eventType === 'task_completed') {
+    updates.tasks_completed_total = (gamification?.tasks_completed_total || 0) + 1;
+  } else if (eventType === 'habit_completed') {
+    updates.habits_completed_total = (gamification?.habits_completed_total || 0) + 1;
+  } else if (eventType === 'goal_completed') {
+    updates.goals_completed_total = (gamification?.goals_completed_total || 0) + 1;
+  }
+  
+  await supabase
+    .from('user_gamification')
+    .update(updates)
+    .eq('user_id', userId);
+  
+  // Check for badge unlocks
+  await checkAndUnlockBadges(userId, newXP, newLevel, gamification);
+  
+  return { newXP, newLevel };
+}
+
+async function checkAndUnlockBadges(
+  userId: string, 
+  totalXP: number, 
+  level: number, 
+  gamification: Record<string, unknown> | null
+) {
+  const supabase = createClient();
+  const currentBadges: string[] = (gamification?.badges as string[]) || [];
+  const newBadges: string[] = [...currentBadges];
+  
+  // Check level badges
+  if (level >= 5 && !currentBadges.includes('level_5')) {
+    newBadges.push('level_5');
+  }
+  if (level >= 10 && !currentBadges.includes('level_10')) {
+    newBadges.push('level_10');
+  }
+  
+  // Check task count badges
+  const tasksTotal = (gamification?.tasks_completed_total as number) || 0;
+  if (tasksTotal >= 1 && !currentBadges.includes('first_task')) {
+    newBadges.push('first_task');
+  }
+  
+  // Check goal badges
+  const goalsTotal = (gamification?.goals_completed_total as number) || 0;
+  if (goalsTotal >= 5 && !currentBadges.includes('goal_crusher')) {
+    newBadges.push('goal_crusher');
+  }
+  
+  // Update badges if changed
+  if (newBadges.length > currentBadges.length) {
+    await supabase
+      .from('user_gamification')
+      .update({ badges: newBadges })
+      .eq('user_id', userId);
+  }
 }
 

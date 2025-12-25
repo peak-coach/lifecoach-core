@@ -14,11 +14,33 @@ import {
   Target,
   Edit3,
   Plus,
-  Loader2
+  Loader2,
+  Zap,
+  Eye,
+  EyeOff,
+  GraduationCap,
+  BookOpen,
+  Play
 } from 'lucide-react';
 import { Confetti, CelebrationToast } from '@/components/confetti';
-import { PWAInstallBanner } from '@/components/pwa-install-banner';
-import { useDashboard, useUser } from '@/lib/hooks';
+import { 
+  PWAInstallBanner, 
+  PomodoroTimer,
+  FreshStartBanner,
+  StreakLossAversion,
+  IdentityBasedMessage,
+  DayEndCelebration,
+  VariableRewardQuote,
+  GoalGradientProgress,
+  XPProgressBar,
+  XPGainAnimation,
+  LevelUpCelebration,
+  PrimaryActionCard,
+  TodayXPSummary,
+  XP_VALUES,
+  getLevelFromXP
+} from '@/components';
+import { useDashboard, useUser, useGamification } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
 import { registerPWA } from '@/lib/pwa';
 
@@ -71,8 +93,22 @@ export default function Dashboard() {
   const { user: authUser } = useAuth();
   const { user } = useUser();
   const { stats, tasks, habits, habitLogs, goals, loading, toggleTask, toggleHabit, refresh } = useDashboard();
+  const { 
+    totalXP, 
+    todayXP, 
+    todayEvents, 
+    addXP, 
+    showXPGain, 
+    lastXPGain, 
+    showLevelUp, 
+    newLevel, 
+    closeLevelUp 
+  } = useGamification();
   
   const [mounted, setMounted] = useState(false);
+  
+  // Focus Mode - simplified dashboard view
+  const [focusMode, setFocusMode] = useState(false);
   
   // Daily Intention - persisted in localStorage
   const [dailyIntention, setDailyIntention] = useState('');
@@ -108,28 +144,42 @@ export default function Dashboard() {
     localStorage.setItem(`intention-${getTodayKey()}`, dailyIntention);
   };
 
-  // Handle task toggle with celebration
+  // Handle task toggle with celebration + XP
   const handleToggleTask = async (taskId: string, currentStatus: string) => {
     const isCompleting = currentStatus !== 'completed';
+    const task = tasks.find(t => t.id === taskId);
+    
     if (isCompleting) {
       setShowConfetti(true);
       setCelebrationMessage(celebrationMessages[Math.floor(Math.random() * celebrationMessages.length)]);
       setShowCelebration(true);
       setTimeout(() => setShowConfetti(false), 100);
+      
+      // Award XP
+      await addXP('task_completed', XP_VALUES.TASK_COMPLETED, `Task: ${task?.title || 'Task'}`, taskId);
     }
     await toggleTask(taskId, isCompleting);
   };
 
-  // Handle habit toggle with celebration
+  // Handle habit toggle with celebration + XP
   const handleToggleHabit = async (habitId: string, isCurrentlyDone: boolean) => {
+    const habit = habits.find(h => h.id === habitId);
+    
     if (!isCurrentlyDone) {
       setShowConfetti(true);
       setCelebrationMessage(celebrationMessages[Math.floor(Math.random() * celebrationMessages.length)]);
       setShowCelebration(true);
       setTimeout(() => setShowConfetti(false), 100);
+      
+      // Award XP
+      await addXP('habit_completed', XP_VALUES.HABIT_COMPLETED, `Habit: ${habit?.name || 'Habit'}`, habitId);
     }
     await toggleHabit(habitId, !isCurrentlyDone);
   };
+
+  // Get next uncompleted task for Primary Action
+  const nextTask = tasks.find(t => t.status !== 'completed');
+  const levelInfo = getLevelFromXP(totalXP);
 
   if (!mounted) return null;
 
@@ -159,6 +209,12 @@ export default function Dashboard() {
         onClose={() => setShowCelebration(false)} 
       />
       
+      {/* XP Gain Animation */}
+      <XPGainAnimation amount={lastXPGain} show={showXPGain} />
+      
+      {/* Level Up Celebration */}
+      <LevelUpCelebration newLevel={newLevel} show={showLevelUp} onClose={closeLevelUp} />
+      
       {/* === HEADER === */}
       <motion.header 
         initial={{ opacity: 0, y: -10 }} 
@@ -174,26 +230,131 @@ export default function Dashboard() {
             <h1 className="text-2xl sm:text-3xl font-bold text-foreground tracking-tight">
               {getGreeting()}, <span className="gradient-text">{userName}</span>
             </h1>
-            <div className="flex items-center gap-3 mt-2 hidden sm:flex">
-              <div className="flex items-center gap-1.5 text-muted-foreground text-sm">
-                <Sparkles className="w-4 h-4 text-[#D9952A]" />
-                <span>Level 1</span>
+            {/* Level & XP Info */}
+            <div className="flex items-center gap-3 mt-2">
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-[#D94F3D]/10 to-[#D9952A]/10 border border-[#D9952A]/20">
+                <span className="text-base">{levelInfo.emoji}</span>
+                <span className="text-sm font-semibold text-[#D9952A]">Lvl {levelInfo.level}</span>
+                <span className="text-xs text-muted-foreground">· {totalXP} XP</span>
               </div>
-              <span className="text-muted-foreground">·</span>
-              <span className="text-sm text-muted-foreground">High Performer</span>
+              {todayXP > 0 && (
+                <div className="flex items-center gap-1 text-green-400 text-sm">
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>+{todayXP} heute</span>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Streak Badge */}
-          <div className="flex items-center gap-3 px-4 sm:px-5 py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-[#D94F3D]/10 border border-[#D94F3D]/20 self-start">
-            <Flame className="w-5 sm:w-6 h-5 sm:h-6 text-[#D94F3D]" />
-            <div>
-              <p className="text-xl sm:text-2xl font-bold text-[#D94F3D]">{currentStreak}</p>
-              <p className="text-[10px] sm:text-xs text-[#D94F3D]/70">Tage Streak</p>
+          <div className="flex items-center gap-3 self-start">
+            {/* Focus Mode Toggle */}
+            <button
+              onClick={() => setFocusMode(!focusMode)}
+              className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all ${
+                focusMode 
+                  ? 'bg-[#D94F3D] text-white' 
+                  : 'bg-[#1f1f1f] text-muted-foreground hover:text-foreground'
+              }`}
+              title={focusMode ? 'Alle anzeigen' : 'Fokus-Modus'}
+            >
+              {focusMode ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+              <span className="text-xs font-medium hidden sm:inline">
+                {focusMode ? 'Fokus' : 'Alle'}
+              </span>
+            </button>
+            
+            {/* Streak Badge */}
+            <div className="flex items-center gap-3 px-4 sm:px-5 py-2 sm:py-3 rounded-xl sm:rounded-2xl bg-[#D94F3D]/10 border border-[#D94F3D]/20">
+              <Flame className="w-5 sm:w-6 h-5 sm:h-6 text-[#D94F3D]" />
+              <div>
+                <p className="text-xl sm:text-2xl font-bold text-[#D94F3D]">{currentStreak}</p>
+                <p className="text-[10px] sm:text-xs text-[#D94F3D]/70">Tage Streak</p>
+              </div>
             </div>
           </div>
         </div>
       </motion.header>
+      
+      {/* === PRIMARY ACTION (Psychologie: One Clear Next Step) === */}
+      {nextTask && !focusMode && (
+        <motion.section
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+          className="mb-6"
+        >
+          <PrimaryActionCard
+            title={nextTask.title}
+            subtitle={nextTask.description || undefined}
+            xpReward={XP_VALUES.TASK_COMPLETED}
+            onAction={() => handleToggleTask(nextTask.id, nextTask.status)}
+            onSkip={() => setFocusMode(false)}
+          />
+        </motion.section>
+      )}
+      
+      {/* === FOCUS MODE: Simplified View === */}
+      {focusMode ? (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="space-y-6"
+        >
+          {/* XP Progress */}
+          <XPProgressBar totalXP={totalXP} />
+          
+          {/* Only Tasks */}
+          <div className="p-5 rounded-2xl bg-[#141414] border border-[#1f1f1f]">
+            <h2 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
+              <Target className="w-4 h-4 text-[#D94F3D]" />
+              Fokus: Deine Tasks
+            </h2>
+            {tasks.filter(t => t.status !== 'completed').length === 0 ? (
+              <p className="text-center text-muted-foreground py-4">
+                🎉 Alle Tasks erledigt! Zeit für Erholung.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {tasks.filter(t => t.status !== 'completed').map((task) => (
+                  <div
+                    key={task.id}
+                    className="flex items-center gap-4 p-3 rounded-xl bg-[#1a1a1a] hover:bg-[#1f1f1f] cursor-pointer transition-all"
+                    onClick={() => handleToggleTask(task.id, task.status)}
+                  >
+                    <button className="w-6 h-6 rounded-full border-2 border-[#3a3a3a] hover:border-[#D94F3D] hover:scale-110 transition-all" />
+                    <span className="flex-1 text-foreground">{task.title}</span>
+                    <span className="text-xs text-[#D9952A] font-medium">+{XP_VALUES.TASK_COMPLETED} XP</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          
+          {/* Today's XP */}
+          <TodayXPSummary events={todayEvents} />
+          
+          <button
+            onClick={() => setFocusMode(false)}
+            className="w-full py-3 rounded-xl border border-[#2a2a2a] text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Alle Elemente anzeigen
+          </button>
+        </motion.div>
+      ) : (
+        /* === FULL DASHBOARD === */
+        <>
+
+      {/* === FRESH START BANNER (Psychologie: Fresh Start Effect) === */}
+      <FreshStartBanner />
+
+      {/* === STREAK WARNING (Psychologie: Loss Aversion) === */}
+      <div className="mb-4">
+        <StreakLossAversion 
+          currentStreak={currentStreak}
+          habitsDone={habitsCompleted}
+          habitsTotal={habitsTotal}
+        />
+      </div>
 
       {/* === DAILY INTENTION === */}
       <motion.section
@@ -280,11 +441,47 @@ export default function Dashboard() {
         </div>
       </motion.section>
 
+      {/* === HEUTE LERNEN WIDGET === */}
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.17 }}
+        className="mb-6"
+      >
+        <Link href="/akademie">
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 hover:border-indigo-500/50 transition-all cursor-pointer group">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="p-3 rounded-xl bg-indigo-500/20 group-hover:bg-indigo-500/30 transition-colors">
+                  <GraduationCap className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-indigo-300 flex items-center gap-2">
+                    <span>Heute lernen</span>
+                    <span className="px-2 py-0.5 text-xs bg-indigo-500/30 rounded-full text-indigo-200">+50 XP</span>
+                  </h3>
+                  <p className="text-sm text-white/60">
+                    Starte deine tägliche Mikro-Lektion
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="px-3 py-1.5 rounded-lg bg-indigo-500 text-white text-sm font-medium flex items-center gap-1.5 group-hover:bg-indigo-400 transition-colors">
+                  <Play className="w-4 h-4" />
+                  <span className="hidden sm:inline">Starten</span>
+                </div>
+                <ChevronRight className="w-5 h-5 text-indigo-400 group-hover:translate-x-1 transition-transform" />
+              </div>
+            </div>
+          </div>
+        </Link>
+      </motion.section>
+
       {/* === TODAY'S OVERVIEW === */}
       <motion.section
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.15 }}
+        transition={{ delay: 0.2 }}
         className="mb-6 sm:mb-10"
       >
         <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4">
@@ -304,6 +501,19 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
+      </motion.section>
+
+      {/* === POMODORO TIMER === */}
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.18 }}
+        className="mb-6 sm:mb-10"
+      >
+        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4">
+          Fokus Timer
+        </h2>
+        <PomodoroTimer tasks={tasks} onComplete={refresh} />
       </motion.section>
 
       {/* === MAIN CONTENT: Tasks & Habits === */}
@@ -439,6 +649,20 @@ export default function Dashboard() {
         </motion.section>
       </div>
 
+      {/* === IDENTITY MESSAGE (Psychologie: Identity-Based Framing) === */}
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.27 }}
+        className="mb-6 sm:mb-10"
+      >
+        <IdentityBasedMessage 
+          tasksCompleted={tasksCompleted}
+          habitsCompleted={habitsCompleted}
+          streak={currentStreak}
+        />
+      </motion.section>
+
       {/* === GOALS & AI TIP === */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8">
         
@@ -509,7 +733,7 @@ export default function Dashboard() {
           </div>
         </motion.section>
 
-        {/* AI Tip */}
+        {/* AI Tip + Quote */}
         <motion.section
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -519,7 +743,7 @@ export default function Dashboard() {
             AI Empfehlung
           </h2>
           
-          <div className="p-5 rounded-2xl bg-gradient-to-br from-[#D9952A]/10 to-[#D94F3D]/5 border border-[#D9952A]/15">
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-[#D9952A]/10 to-[#D94F3D]/5 border border-[#D9952A]/15 mb-4">
             <div className="flex items-start gap-4">
               <div className="p-3 rounded-xl bg-[#D9952A]/15">
                 <Lightbulb className="w-5 h-5 text-[#D9952A]" />
@@ -540,11 +764,31 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+          
+          {/* Variable Reward Quote (Psychologie: Dopamin durch Überraschung) */}
+          <VariableRewardQuote />
         </motion.section>
       </div>
 
+      {/* === DAY END CELEBRATION (Psychologie: Peak-End Rule) === */}
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+        className="mt-6 sm:mt-10"
+      >
+        <DayEndCelebration 
+          tasksCompleted={tasksCompleted}
+          tasksTotal={tasksTotal}
+          habitsCompleted={habitsCompleted}
+          habitsTotal={habitsTotal}
+        />
+      </motion.section>
+
       {/* PWA Install Banner */}
       <PWAInstallBanner />
+      </>
+      )}
     </div>
   );
 }

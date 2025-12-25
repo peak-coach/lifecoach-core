@@ -193,6 +193,12 @@ export function useHabits() {
     await refresh();
   };
 
+  const updateHabit = async (habitId: string, updates: { name?: string; category?: 'health' | 'productivity' | 'mindset' | 'social'; description?: string | null }) => {
+    const result = await api.updateHabit(habitId, updates);
+    await refresh();
+    return result;
+  };
+
   const deleteHabit = async (habitId: string) => {
     await api.deleteHabit(habitId);
     await refresh();
@@ -204,6 +210,7 @@ export function useHabits() {
     loading,
     refresh,
     createHabit,
+    updateHabit,
     toggleHabit,
     deleteHabit,
   };
@@ -248,9 +255,12 @@ export function useGoals() {
   const createGoal = async (goal: { 
     title: string; 
     description?: string | null;
+    why_important?: string | null;
     category?: 'career' | 'health' | 'learning' | 'finance' | 'relationships' | 'personal';
     deadline?: string | null;
-    target_value?: number;
+    target_value?: number | null;
+    goal_type?: 'long' | 'short' | 'sprint';
+    parent_goal_id?: string | null;
   }, milestoneTitles?: string[]) => {
     if (!user?.id) return null;
     const result = await api.createGoal({ ...goal, user_id: user.id });
@@ -317,6 +327,97 @@ export function useGoals() {
     toggleMilestone,
     createMilestone,
     deleteMilestone,
+  };
+}
+
+// ============================================
+// Gamification Hook
+// ============================================
+
+export interface GamificationData {
+  totalXP: number;
+  level: number;
+  badges: string[];
+  todayXP: number;
+  todayEvents: Array<{ type: string; amount: number; description: string }>;
+}
+
+export function useGamification() {
+  const { user } = useUser();
+  const [data, setData] = useState<GamificationData>({
+    totalXP: 0,
+    level: 1,
+    badges: [],
+    todayXP: 0,
+    todayEvents: [],
+  });
+  const [loading, setLoading] = useState(true);
+  const [showXPGain, setShowXPGain] = useState(false);
+  const [lastXPGain, setLastXPGain] = useState(0);
+  const [showLevelUp, setShowLevelUp] = useState(false);
+  const [newLevel, setNewLevel] = useState(1);
+
+  const refresh = useCallback(async () => {
+    if (!user?.id) return;
+    
+    try {
+      const gamificationData = await api.getGamificationData(user.id);
+      setData(gamificationData);
+    } catch (error) {
+      console.error('Error loading gamification data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const addXP = useCallback(async (
+    eventType: string, 
+    amount: number, 
+    description: string,
+    relatedId?: string
+  ) => {
+    if (!user?.id) return;
+    
+    const oldLevel = data.level;
+    
+    try {
+      const result = await api.addXPEvent(user.id, eventType, amount, description, relatedId);
+      
+      // Show XP animation
+      setLastXPGain(amount);
+      setShowXPGain(true);
+      setTimeout(() => setShowXPGain(false), 2000);
+      
+      // Check for level up
+      if (result.newLevel > oldLevel) {
+        setNewLevel(result.newLevel);
+        setShowLevelUp(true);
+      }
+      
+      await refresh();
+    } catch (error) {
+      console.error('Error adding XP:', error);
+    }
+  }, [user?.id, data.level, refresh]);
+
+  const closeLevelUp = useCallback(() => {
+    setShowLevelUp(false);
+  }, []);
+
+  return {
+    ...data,
+    loading,
+    refresh,
+    addXP,
+    showXPGain,
+    lastXPGain,
+    showLevelUp,
+    newLevel,
+    closeLevelUp,
   };
 }
 

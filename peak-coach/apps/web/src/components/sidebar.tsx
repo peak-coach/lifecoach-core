@@ -16,7 +16,8 @@ import {
   ChevronLeft,
   Flame,
   Sparkles,
-  User
+  User,
+  GraduationCap
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { createClient } from '@/lib/supabase';
@@ -26,6 +27,7 @@ const navItems = [
   { href: '/tasks', icon: CheckSquare, label: 'Tasks', shortcut: 'T' },
   { href: '/habits', icon: Repeat, label: 'Habits', shortcut: 'H' },
   { href: '/goals', icon: Target, label: 'Ziele', shortcut: 'G' },
+  { href: '/akademie', icon: GraduationCap, label: 'Akademie', shortcut: 'L' },
   { href: '/analytics', icon: BarChart3, label: 'Analytics', shortcut: 'A' },
 ];
 

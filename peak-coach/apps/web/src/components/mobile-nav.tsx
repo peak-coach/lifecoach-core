@@ -8,15 +8,15 @@ import {
   CheckSquare,
   Repeat,
   Target,
-  Settings,
+  GraduationCap,
 } from 'lucide-react';
 
 const navItems = [
   { href: '/', icon: LayoutDashboard, label: 'Home' },
   { href: '/tasks', icon: CheckSquare, label: 'Tasks' },
-  { href: '/habits', icon: Repeat, label: 'Habits' },
+  { href: '/akademie', icon: GraduationCap, label: 'Lernen' },
   { href: '/goals', icon: Target, label: 'Ziele' },
-  { href: '/settings', icon: Settings, label: 'Mehr' },
+  { href: '/habits', icon: Repeat, label: 'Habits' },
 ];
 
 export function MobileNav() {

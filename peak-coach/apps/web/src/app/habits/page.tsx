@@ -8,7 +8,9 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
-  Loader2
+  Loader2,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import { useHabits } from '@/lib/hooks';
 import { Confetti, CelebrationToast } from '@/components/confetti';
@@ -47,14 +49,27 @@ const celebrationMessages = [
   "Stark! 🔥",
 ];
 
+const categories = ['health', 'productivity', 'mindset', 'social'] as const;
+const categoryLabels: Record<string, string> = {
+  'health': '💪 Gesundheit',
+  'productivity': '⚡ Produktivität',
+  'mindset': '🧠 Mindset',
+  'social': '👥 Soziales',
+};
+
 export default function HabitsPage() {
-  const { habits, habitLogs, loading, createHabit, toggleHabit } = useHabits();
+  const { habits, habitLogs, loading, createHabit, updateHabit, toggleHabit, deleteHabit } = useHabits();
   
   const [selectedHabitId, setSelectedHabitId] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [showAddHabit, setShowAddHabit] = useState(false);
   const [newHabitName, setNewHabitName] = useState('');
   const [newHabitEmoji, setNewHabitEmoji] = useState('🎯');
+  const [newHabitCategory, setNewHabitCategory] = useState<typeof categories[number]>('productivity');
+  
+  // Edit state
+  const [showEditHabit, setShowEditHabit] = useState(false);
+  const [editHabitId, setEditHabitId] = useState<string | null>(null);
   
   // Celebration
   const [showConfetti, setShowConfetti] = useState(false);
@@ -85,14 +100,47 @@ export default function HabitsPage() {
     await toggleHabit(habitId, !isDone);
   };
 
+  const resetForm = () => {
+    setNewHabitName('');
+    setNewHabitEmoji('🎯');
+    setNewHabitCategory('productivity');
+    setShowAddHabit(false);
+    setShowEditHabit(false);
+    setEditHabitId(null);
+  };
+
   const addHabit = async () => {
     if (!newHabitName.trim()) return;
     await createHabit({
       name: newHabitName,
+      category: newHabitCategory,
     });
-    setNewHabitName('');
-    setNewHabitEmoji('🎯');
-    setShowAddHabit(false);
+    resetForm();
+  };
+
+  const openEditModal = (habit: typeof habits[0]) => {
+    setEditHabitId(habit.id);
+    setNewHabitName(habit.name);
+    setNewHabitCategory((habit.category as typeof categories[number]) || 'productivity');
+    setShowEditHabit(true);
+  };
+
+  const handleEditHabit = async () => {
+    if (!editHabitId || !newHabitName.trim()) return;
+    await updateHabit(editHabitId, {
+      name: newHabitName,
+      category: newHabitCategory,
+    });
+    resetForm();
+  };
+
+  const handleDeleteHabit = async (habitId: string) => {
+    if (confirm('Habit wirklich löschen? Alle Streak-Daten gehen verloren.')) {
+      await deleteHabit(habitId);
+      if (selectedHabitId === habitId) {
+        setSelectedHabitId(habits.find(h => h.id !== habitId)?.id || null);
+      }
+    }
   };
 
   const monthDays = getMonthDays(currentMonth.getFullYear(), currentMonth.getMonth());
@@ -173,7 +221,7 @@ export default function HabitsPage() {
                 </div>
               </div>
 
-              <div className="mb-6">
+              <div className="mb-4">
                 <label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Name</label>
                 <input
                   type="text"
@@ -186,9 +234,28 @@ export default function HabitsPage() {
                 />
               </div>
 
+              <div className="mb-6">
+                <label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Kategorie</label>
+                <div className="flex flex-wrap gap-2">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setNewHabitCategory(cat)}
+                      className={`px-3 py-2 rounded-lg text-sm transition-all ${
+                        newHabitCategory === cat
+                          ? 'bg-[#D94F3D] text-white'
+                          : 'bg-[#1a1a1a] text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {categoryLabels[cat]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="flex items-center justify-end gap-2">
                 <button
-                  onClick={() => setShowAddHabit(false)}
+                  onClick={() => resetForm()}
                   className="px-4 py-2 rounded-lg text-muted-foreground hover:text-foreground text-sm"
                 >
                   Abbrechen
@@ -199,6 +266,80 @@ export default function HabitsPage() {
                   className="px-5 py-2 rounded-lg bg-[#D94F3D] text-white text-sm font-medium hover:bg-[#c44535] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Erstellen
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Habit Modal */}
+      <AnimatePresence>
+        {showEditHabit && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => resetForm()}
+              className="fixed inset-0 bg-black/50 z-40"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -20 }}
+              className="fixed top-[20%] left-1/2 -translate-x-1/2 w-full max-w-md z-50 p-5 rounded-2xl bg-[#141414] border border-[#2a2a2a] shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-foreground">Gewohnheit bearbeiten</h2>
+                <button onClick={() => resetForm()} className="p-1 rounded-lg hover:bg-[#1f1f1f] text-muted-foreground">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="mb-4">
+                <label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Name</label>
+                <input
+                  type="text"
+                  value={newHabitName}
+                  onChange={(e) => setNewHabitName(e.target.value)}
+                  className="w-full bg-[#0f0f0f] border border-[#1f1f1f] rounded-xl px-4 py-3 text-foreground outline-none focus:border-[#D94F3D]/50"
+                  autoFocus
+                />
+              </div>
+
+              <div className="mb-6">
+                <label className="text-xs text-muted-foreground uppercase tracking-wide mb-2 block">Kategorie</label>
+                <div className="flex flex-wrap gap-2">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setNewHabitCategory(cat)}
+                      className={`px-3 py-2 rounded-lg text-sm transition-all ${
+                        newHabitCategory === cat
+                          ? 'bg-[#D94F3D] text-white'
+                          : 'bg-[#1a1a1a] text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {categoryLabels[cat]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => resetForm()}
+                  className="px-4 py-2 rounded-lg text-muted-foreground hover:text-foreground text-sm"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={handleEditHabit}
+                  disabled={!newHabitName.trim()}
+                  className="px-5 py-2 rounded-lg bg-[#D94F3D] text-white text-sm font-medium hover:bg-[#c44535] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Speichern
                 </button>
               </div>
             </motion.div>
@@ -304,21 +445,39 @@ export default function HabitsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}
-                        className="p-2 rounded-lg hover:bg-[#1f1f1f] text-muted-foreground"
+                        onClick={() => openEditModal(selectedHabit)}
+                        className="p-2 rounded-lg hover:bg-[#D94F3D]/10 text-muted-foreground hover:text-[#D94F3D]"
+                        title="Bearbeiten"
                       >
-                        <ChevronLeft className="w-4 h-4" />
+                        <Edit3 className="w-4 h-4" />
                       </button>
-                      <span className="text-sm font-medium text-foreground min-w-[120px] text-center">
-                        {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
-                      </span>
                       <button
-                        onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}
-                        className="p-2 rounded-lg hover:bg-[#1f1f1f] text-muted-foreground"
+                        onClick={() => handleDeleteHabit(selectedHabit.id)}
+                        className="p-2 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400"
+                        title="Löschen"
                       >
-                        <ChevronRight className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
+                  </div>
+
+                  {/* Calendar Navigation */}
+                  <div className="flex items-center justify-center gap-2 mb-4">
+                    <button
+                      onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}
+                      className="p-2 rounded-lg hover:bg-[#1f1f1f] text-muted-foreground"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-sm font-medium text-foreground min-w-[120px] text-center">
+                      {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
+                    </span>
+                    <button
+                      onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}
+                      className="p-2 rounded-lg hover:bg-[#1f1f1f] text-muted-foreground"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
                   </div>
 
                   {/* Day Names */}
