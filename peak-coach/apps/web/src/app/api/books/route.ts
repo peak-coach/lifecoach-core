@@ -3,11 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-// Supabase Admin Client
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Supabase Admin Client (lazy initialization)
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
 
 // Google Books API Base URL
 const GOOGLE_BOOKS_API = 'https://www.googleapis.com/books/v1/volumes';
@@ -29,7 +31,7 @@ export async function GET(request: NextRequest) {
 
     // Einzelnes Buch mit Details
     if (bookId) {
-      const { data: book, error } = await supabaseAdmin
+      const { data: book, error } = await getSupabaseAdmin()
         .from('books')
         .select('*')
         .eq('id', bookId)
@@ -40,7 +42,7 @@ export async function GET(request: NextRequest) {
 
       let highlights = null;
       if (includeHighlights) {
-        const { data: highlightData } = await supabaseAdmin
+        const { data: highlightData } = await getSupabaseAdmin()
           .from('book_highlights')
           .select('*')
           .eq('book_id', bookId)
@@ -55,7 +57,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Alle Bücher
-    let query = supabaseAdmin
+    let query = getSupabaseAdmin()
       .from('books')
       .select('*')
       .eq('user_id', userId)
@@ -135,7 +137,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Prüfe ob Buch bereits existiert (gleicher Titel + User)
-    const { data: existing } = await supabaseAdmin
+    const { data: existing } = await getSupabaseAdmin()
       .from('books')
       .select('id, title')
       .eq('user_id', userId)
@@ -149,7 +151,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: book, error } = await supabaseAdmin
+    const { data: book, error } = await getSupabaseAdmin()
       .from('books')
       .insert(bookData)
       .select()
@@ -236,7 +238,7 @@ export async function PATCH(request: NextRequest) {
         }
     }
 
-    const { data: book, error } = await supabaseAdmin
+    const { data: book, error } = await getSupabaseAdmin()
       .from('books')
       .update(updateData)
       .eq('id', bookId)
@@ -266,7 +268,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'bookId and userId required' }, { status: 400 });
     }
 
-    const { error } = await supabaseAdmin
+    const { error } = await getSupabaseAdmin()
       .from('books')
       .delete()
       .eq('id', bookId)

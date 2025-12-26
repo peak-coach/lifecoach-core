@@ -4,11 +4,13 @@ import OpenAI from 'openai';
 
 export const dynamic = 'force-dynamic';
 
-// Supabase Admin Client
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Supabase Admin Client (lazy initialization)
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
 
 // ============================================
 // GET: Hole Highlights
@@ -25,7 +27,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'userId required' }, { status: 400 });
     }
 
-    let query = supabaseAdmin
+    let query = getSupabaseAdmin()
       .from('book_highlights')
       .select(`
         *,
@@ -100,7 +102,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Erstelle Highlight
-    const { data: highlight, error } = await supabaseAdmin
+    const { data: highlight, error } = await getSupabaseAdmin()
       .from('book_highlights')
       .insert({
         user_id: userId,
@@ -127,13 +129,13 @@ export async function POST(request: NextRequest) {
     let action = null;
     if (createAction || highlightType === 'action') {
       // Hole Buch-Titel für Source
-      const { data: book } = await supabaseAdmin
+      const { data: book } = await getSupabaseAdmin()
         .from('books')
         .select('title')
         .eq('id', bookId)
         .single();
 
-      const { data: actionData_, error: actionError } = await supabaseAdmin
+      const { data: actionData_, error: actionError } = await getSupabaseAdmin()
         .from('actions')
         .insert({
           user_id: userId,
@@ -156,7 +158,7 @@ export async function POST(request: NextRequest) {
         action = actionData_;
 
         // Verknüpfe Action mit Highlight
-        await supabaseAdmin
+        await getSupabaseAdmin()
           .from('book_highlights')
           .update({ action_id: action.id })
           .eq('id', highlight.id);
@@ -200,7 +202,7 @@ export async function PATCH(request: NextRequest) {
 
     if (action === 'review') {
       // Spaced Repetition Update (SM-2 Algorithmus)
-      const { data: highlight } = await supabaseAdmin
+      const { data: highlight } = await getSupabaseAdmin()
         .from('book_highlights')
         .select('review_interval_days, ease_factor, review_count')
         .eq('id', highlightId)
@@ -263,7 +265,7 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
-    const { data: highlight, error } = await supabaseAdmin
+    const { data: highlight, error } = await getSupabaseAdmin()
       .from('book_highlights')
       .update(updateData)
       .eq('id', highlightId)
@@ -293,7 +295,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'highlightId and userId required' }, { status: 400 });
     }
 
-    const { error } = await supabaseAdmin
+    const { error } = await getSupabaseAdmin()
       .from('book_highlights')
       .delete()
       .eq('id', highlightId)

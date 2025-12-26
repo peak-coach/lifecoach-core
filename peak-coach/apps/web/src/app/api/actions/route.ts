@@ -3,11 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 
 export const dynamic = 'force-dynamic';
 
-// Supabase Admin Client
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Supabase Admin Client (lazy initialization)
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
 
 // Max offene Actions pro User
 const MAX_PENDING_ACTIONS = 10;
@@ -28,7 +30,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'userId required' }, { status: 400 });
     }
 
-    let query = supabaseAdmin
+    let query = getSupabaseAdmin()
       .from('actions')
       .select('*')
       .eq('user_id', userId)
@@ -113,7 +115,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Prüfe Action-Limit
-    const { data: pendingActions } = await supabaseAdmin
+    const { data: pendingActions } = await getSupabaseAdmin()
       .from('actions')
       .select('id')
       .eq('user_id', userId)
@@ -131,7 +133,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Erstelle Action
-    const { data: action, error } = await supabaseAdmin
+    const { data: action, error } = await getSupabaseAdmin()
       .from('actions')
       .insert({
         user_id: userId,
@@ -241,7 +243,7 @@ export async function PATCH(request: NextRequest) {
         return NextResponse.json({ error: 'Invalid action type' }, { status: 400 });
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await getSupabaseAdmin()
       .from('actions')
       .update(updateData)
       .eq('id', actionId)
@@ -271,7 +273,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'actionId and userId required' }, { status: 400 });
     }
 
-    const { error } = await supabaseAdmin
+    const { error } = await getSupabaseAdmin()
       .from('actions')
       .delete()
       .eq('id', actionId)

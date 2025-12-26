@@ -4,11 +4,13 @@ import OpenAI from 'openai';
 
 export const dynamic = 'force-dynamic';
 
-// Supabase Admin Client (für Server-Side)
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Supabase Admin Client (lazy initialization)
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
 
 // ============================================
 // GET: Hole Skills für ein Ziel
@@ -25,7 +27,7 @@ export async function GET(request: NextRequest) {
 
     // Wenn goalId angegeben, hole Skills für dieses Ziel
     if (goalId) {
-      const { data: skills, error } = await supabaseAdmin
+      const { data: skills, error } = await getSupabaseAdmin()
         .from('goal_skills')
         .select('*')
         .eq('user_id', userId)
@@ -65,7 +67,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Sonst: Hole alle Skills des Users (gruppiert nach Ziel)
-    const { data: skills, error } = await supabaseAdmin
+    const { data: skills, error } = await getSupabaseAdmin()
       .from('goal_skills')
       .select(`
         *,
@@ -102,7 +104,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Prüfe ob bereits Skills existieren
-    const { data: existingSkills } = await supabaseAdmin
+    const { data: existingSkills } = await getSupabaseAdmin()
       .from('goal_skills')
       .select('id')
       .eq('goal_id', goalId)
@@ -117,7 +119,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Versuche zuerst ein passendes Template zu finden
-    const { data: templates } = await supabaseAdmin
+    const { data: templates } = await getSupabaseAdmin()
       .from('skill_templates')
       .select('*')
       .eq('is_active', true);
@@ -136,7 +138,7 @@ export async function POST(request: NextRequest) {
         skillStructure = matchingTemplate.skill_structure;
         
         // Update usage count
-        await supabaseAdmin
+        await getSupabaseAdmin()
           .from('skill_templates')
           .update({ usage_count: (matchingTemplate.usage_count || 0) + 1 })
           .eq('id', matchingTemplate.id);
@@ -208,7 +210,7 @@ OUTPUT FORMAT (JSON):
 
     for (const category of skillStructure.categories || []) {
       // Erstelle Kategorie (Parent Skill)
-      const { data: parentSkill, error: parentError } = await supabaseAdmin
+      const { data: parentSkill, error: parentError } = await getSupabaseAdmin()
         .from('goal_skills')
         .insert({
           goal_id: goalId,
@@ -233,7 +235,7 @@ OUTPUT FORMAT (JSON):
 
       // Erstelle Sub-Skills
       for (const skill of category.skills || []) {
-        const { data: subSkill, error: subError } = await supabaseAdmin
+        const { data: subSkill, error: subError } = await getSupabaseAdmin()
           .from('goal_skills')
           .insert({
             goal_id: goalId,
@@ -292,7 +294,7 @@ export async function PATCH(request: NextRequest) {
 
     filteredUpdates.updated_at = new Date().toISOString();
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await getSupabaseAdmin()
       .from('goal_skills')
       .update(filteredUpdates)
       .eq('id', skillId)
@@ -322,7 +324,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'userId and goalId required' }, { status: 400 });
     }
 
-    const { error } = await supabaseAdmin
+    const { error } = await getSupabaseAdmin()
       .from('goal_skills')
       .delete()
       .eq('goal_id', goalId)
