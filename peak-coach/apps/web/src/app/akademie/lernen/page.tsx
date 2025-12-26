@@ -17,6 +17,12 @@ import {
   BookOpen,
   Play,
   RefreshCw,
+  MessageSquare,
+  Video,
+  ExternalLink,
+  PenLine,
+  HelpCircle,
+  Send,
 } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import confetti from 'canvas-confetti';
@@ -26,8 +32,15 @@ import { rollVariableReward, VariableReward } from '@/lib/rewards';
 import { VariableRewardPopup } from '@/components/variable-reward';
 
 // ============================================
-// Types - Neue 5-Step Struktur
+// Types - Neue 8-Step Struktur
 // ============================================
+
+interface PreTestContent {
+  question: string;
+  options: string[];
+  correctIndex: number;
+  teaser: string;
+}
 
 interface WhyContent {
   hook: string;
@@ -35,11 +48,26 @@ interface WhyContent {
   connection: string;
 }
 
+interface VideoRecommendation {
+  title: string;
+  url: string;
+  duration: string;
+}
+
 interface LearnContent {
   concept: string;
   example: string;
   source: string;
+  keyPoints?: string[];
   previousConnection?: string | null;
+  analogy?: string | null;
+  videoRecommendation?: VideoRecommendation | null;
+}
+
+interface GenerateContent {
+  prompt: string;
+  exampleAnswer: string;
+  keyPointsToInclude: string[];
 }
 
 interface DoContent {
@@ -57,18 +85,34 @@ interface TestQuestion {
   whyOthersWrong: string;
 }
 
+interface ImplementationIntention {
+  situation: string;
+  behavior: string;
+  formatted: string;
+}
+
 interface ActionContent {
   task: string;
-  when: string;
+  implementationIntention?: ImplementationIntention;
+  triggerSuggestions?: string[];
+  timingOptions?: string[];
   metric: string;
+  when?: string; // Legacy support
+}
+
+interface ReflectContent {
+  prompts: string[];
 }
 
 interface ModuleContent {
+  preTest?: PreTestContent;
   why: WhyContent;
   learn: LearnContent;
+  generate?: GenerateContent;
   do: DoContent;
   test: TestQuestion[];
   action: ActionContent;
+  reflect?: ReflectContent;
   reviewQuestions?: string[];
 }
 
@@ -83,9 +127,11 @@ interface Module {
   topic: string;
   totalModules: number;
   content: ModuleContent;
+  goalId?: string;
+  skillId?: string;
 }
 
-type Step = 'diagnosis' | 'why' | 'learn' | 'do' | 'test' | 'action' | 'retry' | 'complete';
+type Step = 'diagnosis' | 'pretest' | 'why' | 'learn' | 'generate' | 'do' | 'test' | 'action' | 'reflect' | 'retry' | 'complete';
 
 type DiagnosisLevel = 'beginner' | 'intermediate' | 'advanced';
 
@@ -230,7 +276,144 @@ function DiagnosisStep({
 }
 
 // ============================================
-// Step 1: WHY - Motivation
+// Step 1: PRE-TEST - Pretesting Effect (NEU!)
+// ============================================
+
+function PreTestStep({ 
+  content, 
+  onNext 
+}: { 
+  content: PreTestContent;
+  onNext: (wasCorrect: boolean) => void;
+}) {
+  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [showResult, setShowResult] = useState(false);
+
+  const handleSelect = (index: number) => {
+    if (selectedAnswer !== null) return;
+    setSelectedAnswer(index);
+    setShowResult(true);
+  };
+
+  const isCorrect = selectedAnswer === content.correctIndex;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="flex flex-col h-full"
+    >
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center gap-2 text-cyan-400 mb-6">
+            <HelpCircle className="w-5 h-5" />
+            <span className="text-sm font-medium uppercase tracking-wider">PRE-TEST • RATE MAL!</span>
+          </div>
+          
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-4"
+          >
+            <p className="text-white/60 text-sm mb-2">
+              🧪 Bevor du lernst: Was denkst du?
+            </p>
+            <h2 className="text-xl md:text-2xl font-bold">
+              {content.question}
+            </h2>
+          </motion.div>
+
+          <p className="text-cyan-300/70 text-sm mb-6 italic">
+            {content.teaser}
+          </p>
+          
+          <div className="space-y-3">
+            {content.options.map((option, index) => (
+              <motion.button
+                key={index}
+                onClick={() => handleSelect(index)}
+                disabled={selectedAnswer !== null}
+                whileHover={selectedAnswer === null ? { scale: 1.02 } : {}}
+                whileTap={selectedAnswer === null ? { scale: 0.98 } : {}}
+                className={`w-full p-4 rounded-xl text-left transition-all ${
+                  selectedAnswer === null
+                    ? 'bg-white/5 hover:bg-white/10 border border-white/10'
+                    : selectedAnswer === index
+                      ? index === content.correctIndex
+                        ? 'bg-emerald-500/20 border border-emerald-500'
+                        : 'bg-amber-500/20 border border-amber-500'
+                      : index === content.correctIndex
+                        ? 'bg-emerald-500/20 border border-emerald-500'
+                        : 'bg-white/5 border border-white/10 opacity-50'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <span className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+                    selectedAnswer === null
+                      ? 'bg-white/10'
+                      : selectedAnswer === index
+                        ? index === content.correctIndex
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-amber-500 text-white'
+                        : index === content.correctIndex
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-white/10'
+                  }`}>
+                    {String.fromCharCode(65 + index)}
+                  </span>
+                  <span>{option}</span>
+                </div>
+              </motion.button>
+            ))}
+          </div>
+
+          {/* Result Message */}
+          {showResult && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`mt-6 p-4 rounded-xl ${
+                isCorrect 
+                  ? 'bg-emerald-500/10 border border-emerald-500/30' 
+                  : 'bg-amber-500/10 border border-amber-500/30'
+              }`}
+            >
+              {isCorrect ? (
+                <p className="text-emerald-300">
+                  ✅ <strong>Gut geraten!</strong> Mal sehen, ob du weißt warum das stimmt...
+                </p>
+              ) : (
+                <p className="text-amber-300">
+                  🤔 <strong>Interessant!</strong> Das werden wir gleich aufklären. Pretesting verbessert dein Lernen um 25%!
+                </p>
+              )}
+            </motion.div>
+          )}
+        </div>
+      </div>
+
+      {showResult && (
+        <div className="p-6 border-t border-white/10">
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            onClick={() => onNext(isCorrect)}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full py-4 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-xl font-semibold flex items-center justify-center gap-2"
+          >
+            Jetzt lernen - Warum?
+            <ArrowRight className="w-5 h-5" />
+          </motion.button>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ============================================
+// Step 2: WHY - Motivation
 // ============================================
 
 function WhyStep({ content, goalTitle, onNext }: { 
@@ -314,7 +497,7 @@ function WhyStep({ content, goalTitle, onNext }: {
 }
 
 // ============================================
-// Step 2: LEARN - Konzept + Beispiel
+// Step 3: LEARN - Konzept + Beispiel + Video
 // ============================================
 
 function LearnStep({ content, onNext }: { content: LearnContent; onNext: () => void }) {
@@ -335,7 +518,7 @@ function LearnStep({ content, onNext }: { content: LearnContent; onNext: () => v
           </div>
           
           {/* Concept */}
-          <div className="prose prose-invert max-w-none mb-8">
+          <div className="prose prose-invert max-w-none mb-6">
             <div 
               className="text-lg leading-relaxed whitespace-pre-line"
               dangerouslySetInnerHTML={{ 
@@ -344,9 +527,38 @@ function LearnStep({ content, onNext }: { content: LearnContent; onNext: () => v
               }}
             />
           </div>
+
+          {/* Key Points (NEU) */}
+          {content.keyPoints && content.keyPoints.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.3 }}
+              className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 mb-6"
+            >
+              <p className="text-indigo-300 font-medium mb-3">📌 Key Points:</p>
+              <ul className="space-y-2">
+                {content.keyPoints.map((point, i) => (
+                  <li key={i} className="flex items-start gap-2 text-white/80">
+                    <span className="text-indigo-400 mt-1">•</span>
+                    <span>{point}</span>
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+          )}
+
+          {/* Analogy (NEU) */}
+          {content.analogy && (
+            <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20 mb-6">
+              <p className="text-purple-300 text-sm">
+                💡 <strong>Analogie:</strong> {content.analogy}
+              </p>
+            </div>
+          )}
           
           {/* Source */}
-          <div className="flex items-center gap-2 text-white/40 text-sm mb-8">
+          <div className="flex items-center gap-2 text-white/40 text-sm mb-6">
             <BookOpen className="w-4 h-4" />
             <span>Quelle: {content.source}</span>
           </div>
@@ -358,6 +570,29 @@ function LearnStep({ content, onNext }: { content: LearnContent; onNext: () => v
                 📎 Verbindung zum vorherigen Modul: {content.previousConnection}
               </p>
             </div>
+          )}
+
+          {/* Video Recommendation (NEU) */}
+          {content.videoRecommendation && (
+            <motion.a
+              href={content.videoRecommendation.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.4 }}
+              className="flex items-center gap-4 p-4 rounded-xl bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 transition-colors mb-6"
+            >
+              <div className="p-3 rounded-xl bg-red-500/20">
+                <Video className="w-6 h-6 text-red-400" />
+              </div>
+              <div className="flex-1">
+                <p className="text-red-300 text-xs font-medium mb-1">📺 Video-Empfehlung</p>
+                <p className="text-white font-medium">{content.videoRecommendation.title}</p>
+                <p className="text-white/40 text-sm">{content.videoRecommendation.duration}</p>
+              </div>
+              <ExternalLink className="w-5 h-5 text-white/40" />
+            </motion.a>
           )}
           
           {/* Example Toggle */}
@@ -403,7 +638,7 @@ function LearnStep({ content, onNext }: { content: LearnContent; onNext: () => v
           whileTap={{ scale: 0.98 }}
           className="w-full py-4 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-xl font-semibold flex items-center justify-center gap-2"
         >
-          Verstanden - Jetzt anwenden
+          Verstanden - Jetzt selbst erklären
           <ArrowRight className="w-5 h-5" />
         </motion.button>
       </div>
@@ -412,7 +647,160 @@ function LearnStep({ content, onNext }: { content: LearnContent; onNext: () => v
 }
 
 // ============================================
-// Step 3: DO - Praktische Übung
+// Step 4: GENERATE - Generation Effect (NEU!)
+// ============================================
+
+function GenerateStep({ 
+  content, 
+  onNext 
+}: { 
+  content: GenerateContent;
+  onNext: (userExplanation: string) => void;
+}) {
+  const [explanation, setExplanation] = useState('');
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackScore, setFeedbackScore] = useState(0);
+
+  const handleSubmit = () => {
+    // Simple scoring based on key points mentioned
+    let score = 0;
+    const lowerExplanation = explanation.toLowerCase();
+    
+    content.keyPointsToInclude.forEach(point => {
+      if (lowerExplanation.includes(point.toLowerCase())) {
+        score++;
+      }
+    });
+
+    // Check minimum length
+    if (explanation.split(' ').length >= 15) {
+      score++;
+    }
+
+    setFeedbackScore(score);
+    setShowFeedback(true);
+  };
+
+  const totalPoints = content.keyPointsToInclude.length + 1;
+  const percentage = Math.round((feedbackScore / totalPoints) * 100);
+  const isGood = percentage >= 60;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="flex flex-col h-full"
+    >
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center gap-2 text-emerald-400 mb-6">
+            <PenLine className="w-5 h-5" />
+            <span className="text-sm font-medium uppercase tracking-wider">ERKLÄRE ES SELBST • +50% RETENTION!</span>
+          </div>
+          
+          <h2 className="text-xl font-bold mb-2">
+            Generation Effect
+          </h2>
+          <p className="text-white/60 mb-6">
+            Wenn du etwas in eigenen Worten erklärst, behältst du es 50% besser! 
+            Keine Sorge - es gibt keine falschen Antworten.
+          </p>
+
+          <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 mb-6">
+            <p className="text-emerald-300 font-medium mb-2">📝 Deine Aufgabe:</p>
+            <p className="text-white">{content.prompt}</p>
+          </div>
+
+          {!showFeedback ? (
+            <>
+              <textarea
+                value={explanation}
+                onChange={(e) => setExplanation(e.target.value)}
+                placeholder="Schreibe hier deine Erklärung... (2-3 Sätze reichen)"
+                className="w-full h-40 p-4 rounded-xl bg-white/5 border border-white/10 focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/50 outline-none resize-none text-white placeholder-white/30"
+              />
+              
+              <p className="text-white/40 text-sm mt-2">
+                💡 Tipp: Versuche diese Begriffe einzubauen: {content.keyPointsToInclude.join(', ')}
+              </p>
+            </>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-4"
+            >
+              {/* User's explanation */}
+              <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                <p className="text-white/40 text-xs mb-2">Deine Erklärung:</p>
+                <p className="text-white">{explanation}</p>
+              </div>
+
+              {/* Feedback */}
+              <div className={`p-4 rounded-xl ${
+                isGood ? 'bg-emerald-500/10 border border-emerald-500/30' : 'bg-amber-500/10 border border-amber-500/30'
+              }`}>
+                <div className="flex items-center gap-2 mb-3">
+                  {isGood ? (
+                    <>
+                      <CheckCircle className="w-5 h-5 text-emerald-400" />
+                      <span className="font-medium text-emerald-400">Super erklärt! 🎉</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lightbulb className="w-5 h-5 text-amber-400" />
+                      <span className="font-medium text-amber-400">Guter Ansatz! Hier eine Musterlösung:</span>
+                    </>
+                  )}
+                </div>
+                
+                <div className="p-3 rounded-lg bg-white/5">
+                  <p className="text-white/40 text-xs mb-1">Mustererklärung:</p>
+                  <p className="text-white/80">{content.exampleAnswer}</p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </div>
+      </div>
+
+      <div className="p-6 border-t border-white/10">
+        {!showFeedback ? (
+          <motion.button
+            onClick={handleSubmit}
+            disabled={explanation.trim().length < 10}
+            whileHover={{ scale: explanation.trim().length >= 10 ? 1.02 : 1 }}
+            whileTap={{ scale: explanation.trim().length >= 10 ? 0.98 : 1 }}
+            className={`w-full py-4 rounded-xl font-semibold flex items-center justify-center gap-2 ${
+              explanation.trim().length >= 10
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-500'
+                : 'bg-white/10 text-white/40 cursor-not-allowed'
+            }`}
+          >
+            <Send className="w-5 h-5" />
+            Erklärung abschicken
+          </motion.button>
+        ) : (
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            onClick={() => onNext(explanation)}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl font-semibold flex items-center justify-center gap-2"
+          >
+            Weiter zur Übung
+            <ArrowRight className="w-5 h-5" />
+          </motion.button>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// ============================================
+// Step 5: DO - Praktische Übung
 // ============================================
 
 function DoStep({ content, onNext }: { content: DoContent; onNext: () => void }) {
@@ -533,7 +921,7 @@ function DoStep({ content, onNext }: { content: DoContent; onNext: () => void })
 }
 
 // ============================================
-// Step 4: TEST - Quiz mit Elaboration
+// Step 6: TEST - Quiz mit Confidence Rating
 // ============================================
 
 function TestStep({ 
@@ -541,33 +929,51 @@ function TestStep({
   onComplete 
 }: { 
   questions: TestQuestion[]; 
-  onComplete: (score: number) => void;
+  onComplete: (score: number, confidenceData: { confidence: number; wasCorrect: boolean }[]) => void;
 }) {
   const [currentQ, setCurrentQ] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [selectedConfidence, setSelectedConfidence] = useState<number | null>(null);
   const [showFeedback, setShowFeedback] = useState(false);
   const [correctAnswers, setCorrectAnswers] = useState<number[]>([]);
+  const [confidenceData, setConfidenceData] = useState<{ confidence: number; wasCorrect: boolean }[]>([]);
 
   const question = questions[currentQ];
   const isCorrect = selectedAnswer === question.correctIndex;
   const isLastQuestion = currentQ === questions.length - 1;
 
+  const confidenceLevels = [
+    { level: 1, emoji: '😬', label: 'Geraten' },
+    { level: 2, emoji: '🤔', label: 'Unsicher' },
+    { level: 3, emoji: '😊', label: 'Ziemlich sicher' },
+    { level: 4, emoji: '😎', label: '100% sicher' },
+  ];
+
   const handleSelect = (index: number) => {
     if (selectedAnswer !== null) return;
     setSelectedAnswer(index);
+  };
+
+  const handleConfidenceSelect = (level: number) => {
+    setSelectedConfidence(level);
     setShowFeedback(true);
-    if (index === question.correctIndex) {
+    
+    const wasCorrect = selectedAnswer === question.correctIndex;
+    if (wasCorrect) {
       setCorrectAnswers(prev => [...prev, currentQ]);
     }
+    
+    setConfidenceData(prev => [...prev, { confidence: level, wasCorrect }]);
   };
 
   const handleNext = () => {
     if (isLastQuestion) {
       const finalScore = correctAnswers.length + (isCorrect && !correctAnswers.includes(currentQ) ? 1 : 0);
-      onComplete(finalScore);
+      onComplete(finalScore, confidenceData);
     } else {
       setCurrentQ(q => q + 1);
       setSelectedAnswer(null);
+      setSelectedConfidence(null);
       setShowFeedback(false);
     }
   };
@@ -606,7 +1012,7 @@ function TestStep({
                       ? index === question.correctIndex
                         ? 'bg-emerald-500/20 border border-emerald-500'
                         : 'bg-red-500/20 border border-red-500'
-                      : index === question.correctIndex
+                      : index === question.correctIndex && showFeedback
                         ? 'bg-emerald-500/20 border border-emerald-500'
                         : 'bg-white/5 border border-white/10 opacity-50'
                 }`}
@@ -619,7 +1025,7 @@ function TestStep({
                         ? index === question.correctIndex
                           ? 'bg-emerald-500 text-white'
                           : 'bg-red-500 text-white'
-                        : index === question.correctIndex
+                        : index === question.correctIndex && showFeedback
                           ? 'bg-emerald-500 text-white'
                           : 'bg-white/10'
                   }`}>
@@ -630,6 +1036,31 @@ function TestStep({
               </button>
             ))}
           </div>
+
+          {/* Confidence Rating (NEU) */}
+          {selectedAnswer !== null && !showFeedback && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20"
+            >
+              <p className="text-purple-300 font-medium mb-3">Wie sicher bist du?</p>
+              <div className="grid grid-cols-4 gap-2">
+                {confidenceLevels.map((conf) => (
+                  <button
+                    key={conf.level}
+                    onClick={() => handleConfidenceSelect(conf.level)}
+                    className={`p-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all text-center ${
+                      selectedConfidence === conf.level ? 'border-purple-500 bg-purple-500/20' : ''
+                    }`}
+                  >
+                    <span className="text-2xl block mb-1">{conf.emoji}</span>
+                    <span className="text-xs text-white/60">{conf.label}</span>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
 
           {/* Feedback with Elaboration */}
           {showFeedback && (
@@ -694,7 +1125,7 @@ function TestStep({
 }
 
 // ============================================
-// Step 5: ACTION - Konkreter nächster Schritt
+// Step 7: ACTION - Implementation Intention Builder (Erweitert)
 // ============================================
 
 function ActionStep({ 
@@ -706,10 +1137,22 @@ function ActionStep({
   content: ActionContent;
   quizScore: number;
   totalQuestions: number;
-  onComplete: () => void;
+  onComplete: (action: { trigger: string; behavior: string; timing: string }) => void;
 }) {
+  const [selectedTrigger, setSelectedTrigger] = useState(content.implementationIntention?.situation || '');
+  const [customTrigger, setCustomTrigger] = useState('');
+  const [selectedTiming, setSelectedTiming] = useState(content.timingOptions?.[0] || 'heute');
   const [committed, setCommitted] = useState(false);
+  
   const percentage = Math.round((quizScore / totalQuestions) * 100);
+  const effectiveTrigger = customTrigger || selectedTrigger;
+
+  const timingOptions = content.timingOptions || ['heute', 'morgen', 'diese Woche', 'bei Gelegenheit'];
+  const triggerSuggestions = content.triggerSuggestions || [
+    'Nach dem Aufstehen',
+    'Im nächsten Meeting',
+    'Bei der nächsten Gelegenheit',
+  ];
 
   return (
     <motion.div
@@ -721,80 +1164,261 @@ function ActionStep({
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl mx-auto">
           {/* Quiz Result */}
-          <div className="text-center mb-8">
-            <div className="flex items-center justify-center gap-2 text-amber-400 mb-4">
+          <div className="text-center mb-6">
+            <div className="flex items-center justify-center gap-2 text-amber-400 mb-3">
               <Trophy className="w-5 h-5" />
               <span className="text-sm font-medium uppercase tracking-wider">QUIZ ERGEBNIS</span>
             </div>
-            <div className="text-4xl font-bold mb-2">{percentage}%</div>
-            <p className="text-white/60">{quizScore} von {totalQuestions} richtig</p>
+            <div className="text-4xl font-bold mb-1">{percentage}%</div>
+            <p className="text-white/60 text-sm">{quizScore} von {totalQuestions} richtig</p>
           </div>
 
           <div className="flex items-center gap-2 text-rose-400 mb-6">
             <Target className="w-5 h-5" />
-            <span className="text-sm font-medium uppercase tracking-wider">DEIN NÄCHSTER SCHRITT</span>
+            <span className="text-sm font-medium uppercase tracking-wider">IMPLEMENTATION INTENTION</span>
           </div>
           
-          <h2 className="text-xl font-bold mb-6">
-            Wissen ohne Anwendung ist nutzlos. Hier ist dein Action Step:
-          </h2>
-          
-          {/* Action Card */}
-          <div className="p-6 rounded-2xl bg-gradient-to-r from-rose-500/10 to-pink-500/10 border border-rose-500/20 mb-6">
-            <div className="space-y-4">
-              <div>
-                <p className="text-rose-300 text-sm font-medium mb-2">📌 Aufgabe:</p>
-                <p className="text-white text-lg">{content.task}</p>
-              </div>
-              
-              <div className="flex gap-4">
-                <div className="flex-1 p-3 rounded-xl bg-white/5">
-                  <p className="text-white/40 text-xs mb-1">Wann:</p>
-                  <p className="text-white font-medium capitalize">{content.when}</p>
-                </div>
-                <div className="flex-1 p-3 rounded-xl bg-white/5">
-                  <p className="text-white/40 text-xs mb-1">Erfolgsmessung:</p>
-                  <p className="text-white font-medium">{content.metric}</p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <p className="text-white/60 mb-6">
+            📌 Menschen die einen konkreten Plan machen, setzen 3x häufiger um!
+          </p>
 
-          {/* Commitment */}
           {!committed ? (
-            <button
-              onClick={() => setCommitted(true)}
-              className="w-full p-4 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
-            >
-              <div className="flex items-center justify-center gap-3">
-                <span className="text-2xl">🤝</span>
-                <span className="font-medium">Ich verpflichte mich, das zu tun!</span>
+            <>
+              {/* Task Preview */}
+              <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 mb-6">
+                <p className="text-rose-300 font-medium mb-2">Deine Aufgabe:</p>
+                <p className="text-white">{content.task}</p>
               </div>
-            </button>
+
+              {/* Trigger Selection */}
+              <div className="mb-6">
+                <p className="text-white/80 font-medium mb-3">WENN...</p>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {triggerSuggestions.map((trigger) => (
+                    <button
+                      key={trigger}
+                      onClick={() => { setSelectedTrigger(trigger); setCustomTrigger(''); }}
+                      className={`px-4 py-2 rounded-lg text-sm transition-all ${
+                        selectedTrigger === trigger && !customTrigger
+                          ? 'bg-rose-500 text-white'
+                          : 'bg-white/5 text-white/70 hover:bg-white/10'
+                      }`}
+                    >
+                      {trigger}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="text"
+                  value={customTrigger}
+                  onChange={(e) => setCustomTrigger(e.target.value)}
+                  placeholder="Oder eigenen Trigger eingeben..."
+                  className="w-full p-3 rounded-lg bg-white/5 border border-white/10 focus:border-rose-500/50 outline-none text-white placeholder-white/30 text-sm"
+                />
+              </div>
+
+              {/* Timing Selection */}
+              <div className="mb-6">
+                <p className="text-white/80 font-medium mb-3">WANN?</p>
+                <div className="flex flex-wrap gap-2">
+                  {timingOptions.map((timing) => (
+                    <button
+                      key={timing}
+                      onClick={() => setSelectedTiming(timing)}
+                      className={`px-4 py-2 rounded-lg text-sm transition-all capitalize ${
+                        selectedTiming === timing
+                          ? 'bg-rose-500 text-white'
+                          : 'bg-white/5 text-white/70 hover:bg-white/10'
+                      }`}
+                    >
+                      {timing}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preview */}
+              {effectiveTrigger && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="p-4 rounded-xl bg-gradient-to-r from-rose-500/20 to-pink-500/20 border border-rose-500/30"
+                >
+                  <p className="text-rose-300 text-sm font-medium mb-2">📋 Dein Plan:</p>
+                  <p className="text-white font-medium">
+                    WENN <span className="text-rose-300">{effectiveTrigger}</span>, DANN werde ich <span className="text-pink-300">{content.implementationIntention?.behavior || content.task}</span>.
+                  </p>
+                  <p className="text-white/60 text-sm mt-2">
+                    Zeitrahmen: <span className="text-white capitalize">{selectedTiming}</span>
+                  </p>
+                </motion.div>
+              )}
+            </>
           ) : (
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="p-4 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-center"
+              className="p-6 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-center"
             >
-              <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
-              <p className="text-emerald-300 font-medium">Commitment gespeichert! 💪</p>
-              <p className="text-white/60 text-sm mt-1">Wir erinnern dich morgen daran.</p>
+              <CheckCircle className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
+              <p className="text-emerald-300 font-medium text-lg">Plan gespeichert! 💪</p>
+              <p className="text-white mt-2">
+                WENN {effectiveTrigger}, DANN {content.implementationIntention?.behavior || content.task}
+              </p>
+              <p className="text-white/60 text-sm mt-2">Wir erinnern dich {selectedTiming} daran.</p>
             </motion.div>
           )}
         </div>
       </div>
 
       <div className="p-6 border-t border-white/10">
+        {!committed ? (
+          <motion.button
+            onClick={() => setCommitted(true)}
+            disabled={!effectiveTrigger}
+            whileHover={{ scale: effectiveTrigger ? 1.02 : 1 }}
+            whileTap={{ scale: effectiveTrigger ? 0.98 : 1 }}
+            className={`w-full py-4 rounded-xl font-semibold flex items-center justify-center gap-2 ${
+              effectiveTrigger
+                ? 'bg-gradient-to-r from-rose-500 to-pink-500'
+                : 'bg-white/10 text-white/40 cursor-not-allowed'
+            }`}
+          >
+            🤝 Ich verpflichte mich!
+          </motion.button>
+        ) : (
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            onClick={() => onComplete({ 
+              trigger: effectiveTrigger, 
+              behavior: content.implementationIntention?.behavior || content.task,
+              timing: selectedTiming 
+            })}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full py-4 bg-gradient-to-r from-rose-500 to-pink-500 rounded-xl font-semibold flex items-center justify-center gap-2"
+          >
+            Weiter zur Reflexion
+            <ArrowRight className="w-5 h-5" />
+          </motion.button>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// ============================================
+// Step 8: REFLECT - Reflection (NEU!)
+// ============================================
+
+function ReflectStep({ 
+  content, 
+  onComplete 
+}: { 
+  content: ReflectContent;
+  onComplete: (reflections: string[]) => void;
+}) {
+  const [reflections, setReflections] = useState<string[]>(new Array(content.prompts.length).fill(''));
+  const [currentPrompt, setCurrentPrompt] = useState(0);
+
+  const handleChange = (value: string) => {
+    const newReflections = [...reflections];
+    newReflections[currentPrompt] = value;
+    setReflections(newReflections);
+  };
+
+  const handleNext = () => {
+    if (currentPrompt < content.prompts.length - 1) {
+      setCurrentPrompt(currentPrompt + 1);
+    } else {
+      onComplete(reflections);
+    }
+  };
+
+  const canProceed = reflections[currentPrompt].trim().length >= 5;
+  const isLast = currentPrompt === content.prompts.length - 1;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      className="flex flex-col h-full"
+    >
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-2xl mx-auto">
+          <div className="flex items-center gap-2 text-violet-400 mb-6">
+            <MessageSquare className="w-5 h-5" />
+            <span className="text-sm font-medium uppercase tracking-wider">REFLEXION • METAKOGNITION</span>
+          </div>
+          
+          <p className="text-white/60 mb-6">
+            🧠 Kurze Reflexion verstärkt das Gelernte und verbessert zukünftiges Lernen.
+          </p>
+
+          {/* Progress */}
+          <div className="flex gap-2 mb-6">
+            {content.prompts.map((_, index) => (
+              <div
+                key={index}
+                className={`h-1 flex-1 rounded-full ${
+                  index < currentPrompt 
+                    ? 'bg-violet-500' 
+                    : index === currentPrompt 
+                      ? 'bg-violet-400/50' 
+                      : 'bg-white/10'
+                }`}
+              />
+            ))}
+          </div>
+
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={currentPrompt}
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+            >
+              <div className="p-4 rounded-xl bg-violet-500/10 border border-violet-500/20 mb-6">
+                <p className="text-violet-300 font-medium">
+                  {content.prompts[currentPrompt]}
+                </p>
+              </div>
+
+              <textarea
+                value={reflections[currentPrompt]}
+                onChange={(e) => handleChange(e.target.value)}
+                placeholder="Deine Gedanken..."
+                className="w-full h-32 p-4 rounded-xl bg-white/5 border border-white/10 focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/50 outline-none resize-none text-white placeholder-white/30"
+              />
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </div>
+
+      <div className="p-6 border-t border-white/10 space-y-3">
         <motion.button
-          onClick={onComplete}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          className="w-full py-4 bg-gradient-to-r from-rose-500 to-pink-500 rounded-xl font-semibold flex items-center justify-center gap-2"
+          onClick={handleNext}
+          disabled={!canProceed}
+          whileHover={{ scale: canProceed ? 1.02 : 1 }}
+          whileTap={{ scale: canProceed ? 0.98 : 1 }}
+          className={`w-full py-4 rounded-xl font-semibold flex items-center justify-center gap-2 ${
+            canProceed
+              ? 'bg-gradient-to-r from-violet-500 to-purple-500'
+              : 'bg-white/10 text-white/40 cursor-not-allowed'
+          }`}
         >
-          Modul abschließen
+          {isLast ? 'Modul abschließen' : 'Nächste Frage'}
           <ArrowRight className="w-5 h-5" />
         </motion.button>
+        
+        <button
+          onClick={() => onComplete(reflections)}
+          className="w-full py-2 text-white/40 hover:text-white/60 text-sm"
+        >
+          Überspringen
+        </button>
       </div>
     </motion.div>
   );
@@ -871,7 +1495,7 @@ function RetryStep({
 }
 
 // ============================================
-// Step 6: COMPLETE - Zusammenfassung
+// Step COMPLETE - Zusammenfassung
 // ============================================
 
 function CompleteStep({ 
@@ -943,7 +1567,7 @@ function CompleteStep({
       <div className="flex items-center gap-4 mb-8">
         <div className="flex items-center gap-2 px-4 py-2 bg-indigo-500/20 rounded-full">
           <Sparkles className="w-5 h-5 text-indigo-400" />
-          <span className="font-medium">+50 XP</span>
+          <span className="font-medium">+75 XP</span>
         </div>
       </div>
 
@@ -973,25 +1597,29 @@ function LernenPageContent() {
   const goalTitle = searchParams.get('goalTitle') || 'Allgemeines Lernen';
   const category = searchParams.get('category') || 'learning';
   const moduleNum = parseInt(searchParams.get('moduleNumber') || '1');
+  const skillId = searchParams.get('skillId');
   const isFirstModule = moduleNum === 1;
 
-  const [currentStep, setCurrentStep] = useState<Step>(isFirstModule ? 'diagnosis' : 'why');
+  const [currentStep, setCurrentStep] = useState<Step>(isFirstModule ? 'diagnosis' : 'pretest');
   const [userLevel, setUserLevel] = useState<DiagnosisLevel>('intermediate');
   const [quizScore, setQuizScore] = useState(0);
+  const [confidenceData, setConfidenceData] = useState<{ confidence: number; wasCorrect: boolean }[]>([]);
   const [module, setModule] = useState<Module | null>(null);
-  const [isGenerating, setIsGenerating] = useState(!isFirstModule); // Don't generate until after diagnosis
+  const [isGenerating, setIsGenerating] = useState(!isFirstModule);
   const [variableReward, setVariableReward] = useState<VariableReward | null>(null);
   const [showRewardPopup, setShowRewardPopup] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [userExplanation, setUserExplanation] = useState('');
+  const [actionData, setActionData] = useState<{ trigger: string; behavior: string; timing: string } | null>(null);
 
   // Handle diagnosis completion
   const handleDiagnosisComplete = (level: DiagnosisLevel) => {
     setUserLevel(level);
-    setCurrentStep('why');
+    setCurrentStep('pretest');
     setIsGenerating(true);
   };
 
-  // Generate module on load (or after diagnosis)
+  // Generate module
   useEffect(() => {
     async function generateModule() {
       if (!isGenerating) return;
@@ -1004,9 +1632,11 @@ function LernenPageContent() {
             goalTitle: decodeURIComponent(goalTitle),
             category,
             goalId,
+            skillId,
             moduleNumber: moduleNum,
             userLevel: userLevel,
             isRetry: retryCount > 0,
+            includeVideo: true,
           }),
         });
 
@@ -1024,13 +1654,13 @@ function LernenPageContent() {
     }
 
     generateModule();
-  }, [goalTitle, category, goalId, moduleNum, userLevel, isGenerating, retryCount]);
+  }, [goalTitle, category, goalId, skillId, moduleNum, userLevel, isGenerating, retryCount]);
 
-  // Define steps based on whether we need diagnosis
-  const baseSteps: Step[] = ['why', 'learn', 'do', 'test', 'action', 'complete'];
+  // Define all steps
+  const baseSteps: Step[] = ['pretest', 'why', 'learn', 'generate', 'do', 'test', 'action', 'reflect', 'complete'];
   const allSteps: Step[] = isFirstModule ? ['diagnosis', ...baseSteps] : baseSteps;
   
-  // Calculate progress (exclude diagnosis from progress bar)
+  // Calculate progress
   const progressSteps = baseSteps.filter(s => s !== 'complete' && s !== 'retry');
   const currentProgressIndex = progressSteps.indexOf(currentStep as any);
   const totalSteps = progressSteps.length;
@@ -1043,12 +1673,21 @@ function LernenPageContent() {
     }
   };
 
-  const handleQuizComplete = async (score: number) => {
+  const handlePreTestComplete = (wasCorrect: boolean) => {
+    setCurrentStep('why');
+  };
+
+  const handleGenerateComplete = (explanation: string) => {
+    setUserExplanation(explanation);
+    setCurrentStep('do');
+  };
+
+  const handleQuizComplete = async (score: number, confData: { confidence: number; wasCorrect: boolean }[]) => {
     setQuizScore(score);
+    setConfidenceData(confData);
     const totalQuestions = module?.content.test.length || 2;
     const percentage = (score / totalQuestions) * 100;
 
-    // Adaptive Difficulty: If < 50%, show retry step
     if (percentage < 50) {
       setCurrentStep('retry');
       return;
@@ -1056,7 +1695,22 @@ function LernenPageContent() {
     setCurrentStep('action');
   };
 
-  const handleModuleComplete = async () => {
+  const handleActionComplete = (action: { trigger: string; behavior: string; timing: string }) => {
+    setActionData(action);
+    
+    // Check if reflect step exists
+    if (module?.content.reflect) {
+      setCurrentStep('reflect');
+    } else {
+      handleModuleComplete();
+    }
+  };
+
+  const handleReflectComplete = (reflections: string[]) => {
+    handleModuleComplete(reflections);
+  };
+
+  const handleModuleComplete = async (reflections?: string[]) => {
     setCurrentStep('complete');
 
     // Roll for variable reward
@@ -1068,13 +1722,13 @@ function LernenPageContent() {
       }, 2000);
     }
 
-    // Log learning activity + Create spaced repetition review
+    // Log learning activity + Create spaced repetition + Create action
     try {
       const supabase = createClient();
       const { data: { user: authUser } } = await supabase.auth.getUser();
 
       if (authUser?.id) {
-        // Log learning activity - use authUser.id (Supabase Auth ID) to match learning_* tables
+        // Log learning activity
         await fetch('/api/learning', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1082,12 +1736,15 @@ function LernenPageContent() {
             userId: authUser.id,
             activityType: 'module_completed',
             moduleId: module?.id,
-            durationMinutes: module?.estimatedMinutes || 10,
+            durationMinutes: module?.estimatedMinutes || 12,
             metadata: {
               goalId,
+              skillId,
               goalTitle: decodeURIComponent(goalTitle),
-              goalCategory: category, // For interleaving
+              goalCategory: category,
               quizScore,
+              confidenceData,
+              userExplanation,
               moduleTitle: module?.title,
               moduleNumber: module?.moduleNumber,
             },
@@ -1116,6 +1773,26 @@ function LernenPageContent() {
             concept: module?.content.learn.concept,
           }),
         });
+
+        // Create action in unified actions system (NEU)
+        if (actionData) {
+          await fetch('/api/actions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: authUser.id,
+              source_type: 'module',
+              source_id: module?.id,
+              source_title: module?.title,
+              action_description: module?.content.action.task,
+              trigger_situation: actionData.trigger,
+              intended_behavior: actionData.behavior,
+              timing_type: actionData.timing === 'bei Gelegenheit' ? 'opportunity' : 
+                          actionData.timing === 'heute' ? 'specific' :
+                          actionData.timing === 'morgen' ? 'specific' : 'weekly',
+            }),
+          });
+        }
       }
     } catch (err) {
       console.error('Error logging learning activity:', err);
@@ -1127,16 +1804,15 @@ function LernenPageContent() {
   };
 
   const handleRetry = () => {
-    // Reset quiz state and regenerate module
     setQuizScore(0);
+    setConfidenceData([]);
     setRetryCount(prev => prev + 1);
-    setCurrentStep('why');
+    setCurrentStep('pretest');
     setIsGenerating(true);
     setModule(null);
   };
 
   const handleRetrySkip = () => {
-    // Continue despite low score
     setCurrentStep('action');
   };
 
@@ -1146,7 +1822,7 @@ function LernenPageContent() {
     }
   };
 
-  // Loading state (but not during diagnosis)
+  // Loading state
   if ((isGenerating || !module) && currentStep !== 'diagnosis') {
     return (
       <div className="min-h-screen bg-[#0f0f1a] flex flex-col items-center justify-center text-white p-6">
@@ -1170,7 +1846,7 @@ function LernenPageContent() {
     );
   }
 
-  // If we're in diagnosis, show diagnosis UI
+  // Diagnosis step
   if (currentStep === 'diagnosis') {
     return (
       <div className="min-h-screen bg-[#0f0f1a] text-white flex flex-col">
@@ -1184,10 +1860,7 @@ function LernenPageContent() {
                   <h1 className="font-semibold text-sm">Eingangs-Assessment</h1>
                 </div>
               </div>
-              <button
-                onClick={handleClose}
-                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-              >
+              <button onClick={handleClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
                 <X className="w-5 h-5 text-white/60" />
               </button>
             </div>
@@ -1204,10 +1877,7 @@ function LernenPageContent() {
     );
   }
 
-  // TypeScript guard: at this point module should not be null
-  if (!module) {
-    return null;
-  }
+  if (!module) return null;
 
   return (
     <div className="min-h-screen bg-[#0f0f1a] text-white flex flex-col">
@@ -1222,10 +1892,7 @@ function LernenPageContent() {
                 <h1 className="font-semibold text-sm">{module.title}</h1>
               </div>
             </div>
-            <button
-              onClick={handleClose}
-              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-            >
+            <button onClick={handleClose} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
               <X className="w-5 h-5 text-white/60" />
             </button>
           </div>
@@ -1236,6 +1903,13 @@ function LernenPageContent() {
       {/* Content */}
       <main className="flex-1 flex flex-col max-w-4xl mx-auto w-full">
         <AnimatePresence mode="wait">
+          {currentStep === 'pretest' && module.content.preTest && (
+            <PreTestStep
+              key="pretest"
+              content={module.content.preTest}
+              onNext={handlePreTestComplete}
+            />
+          )}
           {currentStep === 'why' && (
             <WhyStep 
               key="why"
@@ -1249,6 +1923,13 @@ function LernenPageContent() {
               key="learn"
               content={module.content.learn} 
               onNext={goToNext} 
+            />
+          )}
+          {currentStep === 'generate' && module.content.generate && (
+            <GenerateStep
+              key="generate"
+              content={module.content.generate}
+              onNext={handleGenerateComplete}
             />
           )}
           {currentStep === 'do' && (
@@ -1280,7 +1961,14 @@ function LernenPageContent() {
               content={module.content.action}
               quizScore={quizScore}
               totalQuestions={module.content.test.length}
-              onComplete={handleModuleComplete} 
+              onComplete={handleActionComplete} 
+            />
+          )}
+          {currentStep === 'reflect' && module.content.reflect && (
+            <ReflectStep
+              key="reflect"
+              content={module.content.reflect}
+              onComplete={handleReflectComplete}
             />
           )}
           {currentStep === 'complete' && (
