@@ -8,7 +8,7 @@ import { supabase } from '../services/supabase';
 import { formatDate } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import { generateCoachMessage, chatWithCoach } from '../services/coach';
-import { getMainMenuKeyboard } from '../commands/start';
+import { getMainMenuKeyboard, getMoreMenuKeyboard, MenuCounts } from '../commands/start';
 import { 
   getSleepQualityKeyboard, 
   getSleepHoursKeyboard, 
@@ -58,6 +58,7 @@ import {
   confirmDeleteGoal,
   startWeeklyPlanning,
   addWeekGoal,
+  getGoalCategoryKeyboard,
 } from '../commands/goals';
 import {
   dayCommand,
@@ -75,13 +76,92 @@ export function setupCallbacks(bot: Bot<BotContext>) {
   bot.callbackQuery('show_main_menu', async (ctx) => {
     await ctx.answerCallbackQuery();
     const firstName = ctx.from?.first_name || 'Champion';
+    const telegramId = ctx.from?.id;
+    
+    // Get current work mode and counts
+    let workMode: 'focus' | 'working' | 'off_work' | 'not_started' = 'not_started';
+    let menuCounts: MenuCounts = {};
+    
+    if (telegramId) {
+      try {
+        const { data: user } = await supabase
+          .from('users')
+          .select('id')
+          .eq('telegram_id', telegramId)
+          .single();
+        
+        if (user) {
+          const today = formatDate(new Date());
+          
+          // Get work status
+          const { data: status } = await supabase
+            .from('work_status')
+            .select('work_mode')
+            .eq('user_id', user.id)
+            .eq('date', today)
+            .single();
+          
+          if (status?.work_mode) {
+            workMode = status.work_mode as typeof workMode;
+          }
+
+          // Get task counts
+          const { data: tasks } = await supabase
+            .from('tasks')
+            .select('status')
+            .eq('user_id', user.id)
+            .eq('scheduled_date', today);
+          
+          const totalTasks = tasks?.length || 0;
+          const completedTasks = tasks?.filter(t => t.status === 'completed').length || 0;
+
+          // Get habit counts
+          const { data: habits } = await supabase
+            .from('habits')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('is_active', true);
+          
+          const { data: habitLogs } = await supabase
+            .from('habit_logs')
+            .select('habit_id')
+            .eq('date', today)
+            .eq('completed', true);
+
+          menuCounts = {
+            openTasks: totalTasks - completedTasks,
+            totalTasks,
+            completedHabits: habitLogs?.length || 0,
+            totalHabits: habits?.length || 0,
+          };
+        }
+      } catch (e) {
+        // Use defaults
+      }
+    }
     
     await ctx.editMessageText(
-      `🏆 *Peak Performance Coach*\n\n` +
-      `Hey ${firstName}! Was möchtest du tun?`,
+      `🏆 *Peak Coach*\n\n` +
+      `Hey ${firstName}! 👋`,
       {
         parse_mode: 'Markdown',
-        reply_markup: getMainMenuKeyboard(),
+        reply_markup: getMainMenuKeyboard(workMode, menuCounts),
+      }
+    );
+  });
+
+  // ============================================
+  // 📁 "MEHR" UNTERMENÜ
+  // ============================================
+  bot.callbackQuery('menu_more', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    
+    await ctx.editMessageText(
+      `📁 *Weitere Optionen*\n\n` +
+      `Wähle eine Option:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: getMoreMenuKeyboard(),
       }
     );
   });
@@ -514,6 +594,163 @@ export function setupCallbacks(bot: Bot<BotContext>) {
     await handleGoalWhy(ctx, null);
   });
 
+  // ============================================
+  // GOAL REFINEMENT CALLBACKS
+  // ============================================
+
+  // Accept refined goal with AI-suggested milestones
+  bot.callbackQuery('goal_accept_refined', async (ctx) => {
+    await ctx.answerCallbackQuery('Erstelle optimiertes Ziel...');
+    const telegramId = ctx.from?.id;
+    
+    if (!telegramId || !ctx.session.goalData) {
+      await ctx.editMessageText('❌ Fehler: Keine Zieldaten gefunden.');
+      return;
+    }
+
+    try {
+      const { data: user } = await supabase
+        .from('users')
+        .select('id')
+        .eq('telegram_id', telegramId)
+        .single();
+
+      if (!user) {
+        await ctx.editMessageText('❌ User nicht gefunden.');
+        return;
+      }
+
+      const goalData = ctx.session.goalData;
+      
+      // Calculate deadline
+      let deadline = goalData.deadline;
+      if (!deadline) {
+        const deadlineDate = new Date();
+        deadlineDate.setDate(deadlineDate.getDate() + 84); // ~12 weeks
+        deadline = deadlineDate.toISOString().split('T')[0];
+      }
+
+      // Map category to DB-allowed values
+      const categoryMap: Record<string, string> = {
+        'career': 'career', 'health': 'health', 'fitness': 'health',
+        'learning': 'learning', 'finance': 'finance', 'relationships': 'relationships',
+        'personal': 'personal', 'mental': 'personal', 'other': 'personal',
+        'rhetorik': 'learning', 'fuehrerschein': 'learning', 'business': 'career',
+        'ki': 'learning', 'trt': 'health', 'muskelaufbau': 'health',
+      };
+      const dbCategory = categoryMap[goalData.category?.toLowerCase() || ''] || 'personal';
+
+      // Create goal
+      const { data: newGoal, error: goalError } = await supabase
+        .from('goals')
+        .insert({
+          user_id: user.id,
+          title: goalData.title,
+          description: goalData.originalTitle !== goalData.title ? `Ursprünglich: "${goalData.originalTitle}"` : null,
+          category: dbCategory,
+          target_value: goalData.targetValue || 100,
+          current_value: 0,
+          deadline: deadline,
+          why_important: goalData.whyImportant,
+          status: 'active',
+        })
+        .select()
+        .single();
+
+      if (goalError || !newGoal) {
+        logger.error('Error creating refined goal:', goalError);
+        await ctx.editMessageText('❌ Fehler beim Erstellen des Ziels.');
+        return;
+      }
+
+      // Create milestones from suggestions
+      const milestones = goalData.suggestedMilestones || [];
+      for (let i = 0; i < milestones.length; i++) {
+        await supabase
+          .from('milestones')
+          .insert({
+            goal_id: newGoal.id,
+            user_id: user.id,
+            title: milestones[i],
+            position: i,
+            completed: false,
+          });
+      }
+
+      // Format expert insights
+      const insights = goalData.expertInsights || [];
+      let insightsText = '';
+      if (insights.length > 0) {
+        insightsText = `\n\n🧠 *Merke dir:*\n${insights.slice(0, 2).join('\n')}`;
+      }
+
+      ctx.session.goalData = undefined;
+      ctx.session.step = undefined;
+
+      await ctx.editMessageText(
+        `🎉 *Ziel erstellt!*\n\n` +
+        `🎯 *${goalData.title}*\n\n` +
+        `📊 ${milestones.length} Meilensteine hinzugefügt\n` +
+        `📅 Deadline: ${new Date(deadline).toLocaleDateString('de-DE')}` +
+        insightsText + `\n\n` +
+        `_Dein erster Meilenstein:_\n` +
+        `→ ${milestones[0] || 'Noch keiner definiert'}`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: new InlineKeyboard()
+            .text('✨ Tasks generieren', 'generate_daily_tasks')
+            .row()
+            .text('🎯 Ziele anzeigen', 'menu_goals')
+            .text('🏠 Hauptmenü', 'show_main_menu'),
+        }
+      );
+
+    } catch (error) {
+      logger.error('Error in goal_accept_refined:', error);
+      await ctx.editMessageText('❌ Ein Fehler ist aufgetreten.');
+    }
+  });
+
+  // Modify refined goal
+  bot.callbackQuery('goal_modify_refined', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    ctx.session.step = 'goal_create_category';
+    
+    const title = ctx.session.goalData?.title || 'Dein Ziel';
+    
+    await ctx.editMessageText(
+      `✏️ *Ziel anpassen*\n\n` +
+      `Aktuell: *${title}*\n\n` +
+      `Wähle die *Kategorie*:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: getGoalCategoryKeyboard(),
+      }
+    );
+  });
+
+  // Use original goal title (skip refinement)
+  bot.callbackQuery('goal_use_original', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    
+    // Reset to original title
+    if (ctx.session.goalData?.originalTitle) {
+      ctx.session.goalData.title = ctx.session.goalData.originalTitle;
+    }
+    ctx.session.step = 'goal_create_category';
+    
+    const title = ctx.session.goalData?.title || 'Dein Ziel';
+    
+    await ctx.editMessageText(
+      `✅ Ziel: *${title}*\n\n` +
+      `In welche *Kategorie* gehört dieses Ziel?`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: getGoalCategoryKeyboard(),
+      }
+    );
+  });
+
   // Goals: Select
   bot.callbackQuery(/^goal_select_(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -758,6 +995,191 @@ export function setupCallbacks(bot: Bot<BotContext>) {
     );
   });
 
+  // Settings: Coach Style
+  bot.callbackQuery('settings_coach_style', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+
+    if (!user) return;
+
+    const { data: profile } = await supabase
+      .from('user_profile')
+      .select('coach_style')
+      .eq('user_id', user.id)
+      .single();
+
+    const currentStyle = profile?.coach_style || 'balanced';
+    const styleEmoji = { tough: '💪', balanced: '⚖️', gentle: '🤗' };
+    const styleName = { tough: 'Tough Love', balanced: 'Ausgewogen', gentle: 'Sanft' };
+
+    await ctx.editMessageText(
+      `🎭 *Coach-Stil*\n\n` +
+      `Aktuell: ${styleEmoji[currentStyle as keyof typeof styleEmoji]} ${styleName[currentStyle as keyof typeof styleName]}\n\n` +
+      `Wähle deinen bevorzugten Stil:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('💪 Tough Love', 'set_coach_style_tough')
+          .row()
+          .text('⚖️ Ausgewogen', 'set_coach_style_balanced')
+          .row()
+          .text('🤗 Sanft', 'set_coach_style_gentle')
+          .row()
+          .text('🔙 Zurück', 'menu_settings'),
+      }
+    );
+  });
+
+  // Set Coach Style
+  bot.callbackQuery(/^set_coach_style_(.+)$/, async (ctx) => {
+    const style = ctx.match[1];
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+
+    if (!user) return;
+
+    await supabase
+      .from('user_profile')
+      .update({ coach_style: style })
+      .eq('user_id', user.id);
+
+    const styleName = { tough: 'Tough Love 💪', balanced: 'Ausgewogen ⚖️', gentle: 'Sanft 🤗' };
+    
+    await ctx.answerCallbackQuery(`Stil geändert: ${styleName[style as keyof typeof styleName]}`);
+    await ctx.editMessageText(
+      `✅ *Coach-Stil aktualisiert!*\n\n` +
+      `Neuer Stil: ${styleName[style as keyof typeof styleName]}\n\n` +
+      `Der Coach wird sich jetzt entsprechend verhalten.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('🔙 Einstellungen', 'menu_settings')
+          .text('🏠 Menü', 'show_main_menu'),
+      }
+    );
+  });
+
+  // Stats: Last Week
+  bot.callbackQuery('stats_last_week', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+    
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (user) {
+      await showWeeklyStats(ctx, user.id, true);
+    }
+  });
+
+  // Stats: Month
+  bot.callbackQuery('stats_month', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+    
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (user) {
+      // For now, show weekly stats (month stats would need additional implementation)
+      await showWeeklyStats(ctx, user.id, true);
+    }
+  });
+
+  // Tasks: Other Days
+  bot.callbackQuery('tasks_other_days', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+
+    if (!user) return;
+
+    // Get next 7 days tasks
+    const today = new Date();
+    const nextWeek = new Date();
+    nextWeek.setDate(today.getDate() + 7);
+
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('title, scheduled_date, priority')
+      .eq('user_id', user.id)
+      .gt('scheduled_date', formatDate(today))
+      .lte('scheduled_date', formatDate(nextWeek))
+      .order('scheduled_date', { ascending: true })
+      .limit(15);
+
+    if (!tasks || tasks.length === 0) {
+      await ctx.editMessageText(
+        `📅 *Kommende Tasks*\n\n` +
+        `Keine Tasks für die nächsten 7 Tage geplant.`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: new InlineKeyboard()
+            .text('➕ Task erstellen', 'task_create_start')
+            .row()
+            .text('🔙 Zurück', 'menu_tasks'),
+        }
+      );
+      return;
+    }
+
+    // Group by date
+    const grouped: Record<string, typeof tasks> = {};
+    tasks.forEach(task => {
+      const date = task.scheduled_date || 'Unbekannt';
+      if (!grouped[date]) grouped[date] = [];
+      grouped[date].push(task);
+    });
+
+    let message = `📅 *Kommende Tasks*\n\n`;
+    Object.entries(grouped).forEach(([date, dateTasks]) => {
+      const dateObj = new Date(date);
+      const dayName = dateObj.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' });
+      message += `*${dayName}*\n`;
+      dateTasks.forEach(task => {
+        const priorityIcon = task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟡' : '🟢';
+        message += `  ${priorityIcon} ${task.title}\n`;
+      });
+      message += `\n`;
+    });
+
+    await ctx.editMessageText(message, {
+      parse_mode: 'Markdown',
+      reply_markup: new InlineKeyboard()
+        .text('📋 Heute', 'menu_tasks')
+        .text('➕ Neu', 'task_create_start')
+        .row()
+        .text('🏠 Menü', 'show_main_menu'),
+    });
+  });
+
   // Grace Day Activation
   bot.callbackQuery('activate_grace_day', async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -824,6 +1246,131 @@ export function setupCallbacks(bot: Bot<BotContext>) {
       const { showPomodoroMenu } = await import('../commands/pomodoro');
       await showPomodoroMenu(ctx, user.id, true);
     }
+  });
+
+  // Pomodoro Start (without duration - show task selection)
+  bot.callbackQuery('pomodoro_start', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+    
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (!user) return;
+    
+    // Get today's tasks
+    const today = formatDate(new Date());
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('id, title, priority')
+      .eq('user_id', user.id)
+      .eq('scheduled_date', today)
+      .in('status', ['pending', 'in_progress'])
+      .order('priority', { ascending: true })
+      .limit(5);
+    
+    const keyboard = new InlineKeyboard();
+    
+    if (tasks && tasks.length > 0) {
+      tasks.forEach(task => {
+        const priorityIcon = task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟡' : '🟢';
+        keyboard.text(`${priorityIcon} ${task.title.substring(0, 25)}`, `pomodoro_task_${task.id}`).row();
+      });
+    }
+    
+    keyboard.text('🍅 Ohne Task (25 Min)', 'pomodoro_start_25').row();
+    keyboard.text('🔙 Zurück', 'menu_pomodoro');
+    
+    await ctx.editMessageText(
+      `🍅 *Pomodoro starten*\n\n` +
+      `Wähle einen Task für diese Session:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      }
+    );
+  });
+
+  // Pomodoro Break Short (5 min)
+  bot.callbackQuery('pomodoro_break_short', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+    
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (!user) return;
+    
+    // Create break session
+    await supabase
+      .from('pomodoro_sessions')
+      .insert({
+        user_id: user.id,
+        type: 'short_break',
+        duration_minutes: 5,
+        started_at: new Date().toISOString(),
+        status: 'active',
+      });
+    
+    await ctx.editMessageText(
+      `☕ *Kurze Pause gestartet*\n\n` +
+      `5 Minuten - entspann dich!\n\n` +
+      `💡 Tipp: Steh auf, streck dich, trink Wasser.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('⏹ Pause beenden', 'pomodoro_complete')
+          .row()
+          .text('🔙 Menü', 'menu_pomodoro'),
+      }
+    );
+  });
+
+  // Pomodoro Break Long (15 min)
+  bot.callbackQuery('pomodoro_break_long', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+    
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (!user) return;
+    
+    // Create break session
+    await supabase
+      .from('pomodoro_sessions')
+      .insert({
+        user_id: user.id,
+        type: 'long_break',
+        duration_minutes: 15,
+        started_at: new Date().toISOString(),
+        status: 'active',
+      });
+    
+    await ctx.editMessageText(
+      `🧘 *Lange Pause gestartet*\n\n` +
+      `15 Minuten - richtig erholen!\n\n` +
+      `💡 Tipp: Geh kurz raus, mach einen Snack.`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('⏹ Pause beenden', 'pomodoro_complete')
+          .row()
+          .text('🔙 Menü', 'menu_pomodoro'),
+      }
+    );
   });
 
   bot.callbackQuery(/^pomodoro_start_(\d+)$/, async (ctx) => {
@@ -1154,6 +1701,48 @@ export function setupCallbacks(bot: Bot<BotContext>) {
   // CHECK-IN FLOW
   // ============================================
 
+  // Start Check-in (alias for morning checkin - used by scheduler)
+  bot.callbackQuery('start_checkin', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await startMorningCheckin(ctx);
+  });
+
+  // Show Tasks (used by scheduler midday check)
+  bot.callbackQuery('show_tasks', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+    
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+    
+    if (user) {
+      await showTasksList(ctx, user.id);
+    }
+  });
+
+  // Talk to Coach (used by scheduler)
+  bot.callbackQuery('talk_to_coach', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    ctx.session.step = 'coach_chat';
+    await ctx.editMessageText(
+      `💬 *Coach Chat*\n\n` +
+      `Was beschäftigt dich? Schreib mir einfach eine Nachricht.\n\n` +
+      `Beispiele:\n` +
+      `• "Ich bin unmotiviert"\n` +
+      `• "Wie priorisiere ich heute?"\n` +
+      `• "Ich schaffe meine Tasks nicht"`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('🔙 Zurück', 'show_main_menu'),
+      }
+    );
+  });
+
   bot.callbackQuery('start_morning_checkin', async (ctx) => {
     await ctx.answerCallbackQuery();
     await startMorningCheckin(ctx);
@@ -1384,6 +1973,276 @@ export function setupCallbacks(bot: Bot<BotContext>) {
     await handleStartWorkDay(ctx);
   });
 
+  // ============================================
+  // NEW DAY FLOW: Check-in → Mode Selection → Tasks
+  // ============================================
+
+  // Start Day Flow (Morning)
+  bot.callbackQuery('start_day_flow', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    
+    // First: Morning Check-in
+    await ctx.editMessageText(
+      `☀️ *Guten Morgen!*\n\n` +
+      `Lass uns deinen Tag starten.\n` +
+      `Zuerst ein kurzer Check-in:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('📝 Check-in starten', 'start_morning_checkin')
+          .row()
+          .text('⏭️ Überspringen', 'select_work_mode'),
+      }
+    );
+  });
+
+  // Select Work Mode (after check-in or skip)
+  bot.callbackQuery('select_work_mode', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    
+    await ctx.editMessageText(
+      `🕐 *Was steht heute an?*\n\n` +
+      `Wähle deinen Modus:\n\n` +
+      `🏗️ *Arbeitszeit*\n` +
+      `_Du bist bei der Arbeit (Baustelle, Büro, etc.)_\n` +
+      `→ Nur Mini-Habits & Erinnerungen\n\n` +
+      `💻 *Fokuszeit*\n` +
+      `_Du hast Zeit für deine Ziele_\n` +
+      `→ Tasks aus deinen Zielen generieren`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('🏗️ Arbeitszeit', 'set_mode_working')
+          .text('💻 Fokuszeit', 'set_mode_focus')
+          .row()
+          .text('🧘 Recovery Tag', 'set_mode_recovery')
+          .row()
+          .text('🔙 Zurück', 'show_main_menu'),
+      }
+    );
+  });
+
+  // Set Mode: Working (at job)
+  bot.callbackQuery('set_mode_working', async (ctx) => {
+    await ctx.answerCallbackQuery('Arbeitszeit aktiviert 🏗️');
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+
+    if (!user) return;
+
+    const today = formatDate(new Date());
+    await supabase
+      .from('work_status')
+      .upsert({
+        user_id: user.id,
+        date: today,
+        work_mode: 'working',
+        work_start: new Date().toISOString(),
+      });
+
+    await ctx.editMessageText(
+      `🏗️ *Arbeitszeit gestartet!*\n\n` +
+      `Ich werde dich nicht mit Tasks nerven.\n\n` +
+      `Stattdessen erinnere ich dich an:\n` +
+      `• 💧 Wasser trinken\n` +
+      `• 🚶 Bewegungspausen\n` +
+      `• 🍎 Gesunde Snacks\n\n` +
+      `_Wenn du Zeit für deine Ziele hast, wechsle zu Fokuszeit._`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('💻 Zu Fokuszeit wechseln', 'switch_to_focus')
+          .row()
+          .text('🏠 Hauptmenü', 'show_main_menu'),
+      }
+    );
+  });
+
+  // Set Mode: Focus (time for goals)
+  bot.callbackQuery('set_mode_focus', async (ctx) => {
+    await ctx.answerCallbackQuery('Fokuszeit aktiviert 💻');
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+
+    if (!user) return;
+
+    const today = formatDate(new Date());
+    await supabase
+      .from('work_status')
+      .upsert({
+        user_id: user.id,
+        date: today,
+        work_mode: 'focus',
+        work_start: new Date().toISOString(),
+      });
+
+    // Check if check-in was done
+    const { data: dailyLog } = await supabase
+      .from('daily_logs')
+      .select('morning_energy, morning_mood')
+      .eq('user_id', user.id)
+      .eq('date', today)
+      .single();
+
+    if (dailyLog?.morning_energy && dailyLog?.morning_mood) {
+      // Generate tasks based on goals
+      await ctx.editMessageText(
+        `💻 *Fokuszeit gestartet!*\n\n` +
+        `Soll ich Tasks aus deinen Zielen generieren?`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: new InlineKeyboard()
+            .text('✅ Tasks generieren', 'generate_daily_tasks')
+            .row()
+            .text('📋 Meine Tasks anzeigen', 'menu_tasks')
+            .row()
+            .text('🏠 Hauptmenü', 'show_main_menu'),
+        }
+      );
+    } else {
+      await ctx.editMessageText(
+        `💻 *Fokuszeit gestartet!*\n\n` +
+        `Für bessere Task-Vorschläge, mach zuerst einen Check-in:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: new InlineKeyboard()
+            .text('📝 Check-in machen', 'start_morning_checkin')
+            .row()
+            .text('⏭️ Überspringen & Tasks generieren', 'generate_daily_tasks')
+            .row()
+            .text('🏠 Hauptmenü', 'show_main_menu'),
+        }
+      );
+    }
+  });
+
+  // Set Mode: Recovery
+  bot.callbackQuery('set_mode_recovery', async (ctx) => {
+    await ctx.answerCallbackQuery('Recovery Tag aktiviert 🧘');
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+
+    if (!user) return;
+
+    const today = formatDate(new Date());
+    await supabase
+      .from('work_status')
+      .upsert({
+        user_id: user.id,
+        date: today,
+        work_mode: 'recovery',
+        day_type: 'recovery',
+      });
+
+    await ctx.editMessageText(
+      `🧘 *Recovery Tag aktiviert!*\n\n` +
+      `Heute ist Erholung angesagt.\n` +
+      `Kein Druck, keine Pflichten.\n\n` +
+      `Empfehlungen:\n` +
+      `• 😴 Ausschlafen / Naps\n` +
+      `• 🚶 Leichte Bewegung\n` +
+      `• 📵 Digital Detox\n` +
+      `• 🧘 Meditation / Entspannung\n\n` +
+      `_Genieß den Tag!_`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('🏠 Hauptmenü', 'show_main_menu'),
+      }
+    );
+  });
+
+  // Switch to Focus Mode
+  bot.callbackQuery('switch_to_focus', async (ctx) => {
+    await ctx.answerCallbackQuery('Wechsle zu Fokuszeit...');
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+
+    if (!user) return;
+
+    const today = formatDate(new Date());
+    await supabase
+      .from('work_status')
+      .update({ work_mode: 'focus' })
+      .eq('user_id', user.id)
+      .eq('date', today);
+
+    await ctx.editMessageText(
+      `💻 *Fokuszeit!*\n\n` +
+      `Jetzt ist Zeit für deine Ziele.\n` +
+      `Soll ich Tasks generieren?`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('✅ Tasks generieren', 'generate_daily_tasks')
+          .row()
+          .text('📋 Meine Tasks', 'menu_tasks')
+          .text('🍅 Pomodoro', 'menu_pomodoro')
+          .row()
+          .text('🏠 Hauptmenü', 'show_main_menu'),
+      }
+    );
+  });
+
+  // Switch to Working Mode
+  bot.callbackQuery('switch_to_working', async (ctx) => {
+    await ctx.answerCallbackQuery('Wechsle zu Arbeitszeit...');
+    const telegramId = ctx.from?.id;
+    if (!telegramId) return;
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('telegram_id', telegramId)
+      .single();
+
+    if (!user) return;
+
+    const today = formatDate(new Date());
+    await supabase
+      .from('work_status')
+      .update({ work_mode: 'working' })
+      .eq('user_id', user.id)
+      .eq('date', today);
+
+    await ctx.editMessageText(
+      `🏗️ *Arbeitszeit!*\n\n` +
+      `Ich halte mich zurück mit Tasks.\n` +
+      `Fokussier dich auf deine Arbeit! 💪`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('💻 Zu Fokuszeit wechseln', 'switch_to_focus')
+          .row()
+          .text('🏠 Hauptmenü', 'show_main_menu'),
+      }
+    );
+  });
+
   // Feierabend Confirm (Quick from status)
   bot.callbackQuery('confirm_feierabend_quick', async (ctx) => {
     await ctx.answerCallbackQuery();
@@ -1435,24 +2294,40 @@ export function setupCallbacks(bot: Bot<BotContext>) {
         sleepQuality: ctx.session.lastCheckinData?.sleepQuality,
       };
       
+      // Get current work mode
+      const today = formatDate(new Date());
+      const { data: workStatus } = await supabase
+        .from('work_status')
+        .select('work_mode')
+        .eq('user_id', user.id)
+        .eq('date', today)
+        .single();
+      
+      const workMode = (workStatus?.work_mode || 'focus') as 'focus' | 'working' | 'recovery';
+      
       await ctx.editMessageText(
-        `🤖 *AI Task-Generator*\n\n` +
-        `⏳ Analysiere deine Ziele und Energie...\n` +
+        `🤖 *GOAL-FIRST Task-Generator*\n\n` +
+        `⏳ Analysiere deine Ziele...\n` +
+        `🧠 Suche beste Strategien...\n` +
+        `✨ Generiere optimale Tasks...\n\n` +
         `_Das dauert nur wenige Sekunden..._`,
         { parse_mode: 'Markdown' }
       );
       
-      // Generate tasks
-      const generatedTasks = await generateDailyTasks(user.id, checkinData);
+      // Generate GOAL-FIRST tasks
+      const generatedTasks = await generateDailyTasks(user.id, checkinData, workMode);
       
       if (generatedTasks.length === 0) {
         await ctx.editMessageText(
-          `🤖 *AI Task-Generator*\n\n` +
-          `Keine Tasks generiert. Erstelle zuerst Ziele oder wiederkehrende Tasks!`,
+          `🤖 *GOAL-FIRST Task-Generator*\n\n` +
+          `⚠️ Du hast noch keine aktiven Ziele!\n\n` +
+          `Damit ich dir die besten Tasks vorschlagen kann, brauchst du mindestens ein Ziel.\n\n` +
+          `_Tipp: Je detaillierter dein Ziel + "Warum", desto besser meine Vorschläge!_`,
           {
             parse_mode: 'Markdown',
             reply_markup: new InlineKeyboard()
               .text('🎯 Ziel erstellen', 'create_goal')
+              .row()
               .text('📋 Tasks selbst planen', 'menu_tasks')
               .row()
               .text('🏠 Hauptmenü', 'show_main_menu'),
@@ -1464,19 +2339,32 @@ export function setupCallbacks(bot: Bot<BotContext>) {
       // Store generated tasks in session for confirmation
       ctx.session.generatedTasks = generatedTasks;
       
-      // Format tasks for display
+      // Format tasks with GOAL-FIRST display
       const priorityEmoji: Record<string, string> = { high: '🔴', medium: '🟡', low: '🟢' };
-      const energyEmoji: Record<string, string> = { high: '🔥', medium: '⚡', low: '😴' };
+      const energyEmoji: Record<string, string> = { high: '🔥', medium: '⚡', low: '💤' };
       
-      let taskList = generatedTasks.map((t, i) => 
-        `${i + 1}. ${priorityEmoji[t.priority]} ${t.title}\n` +
-        `   ${energyEmoji[t.energy_required]} ~${t.estimated_minutes} Min | _${t.reason}_`
-      ).join('\n\n');
+      // Group tasks by goal
+      const tasksByGoal: Record<string, typeof generatedTasks> = {};
+      for (const task of generatedTasks) {
+        const goal = task.goal_title || 'Sonstiges';
+        if (!tasksByGoal[goal]) tasksByGoal[goal] = [];
+        tasksByGoal[goal].push(task);
+      }
+      
+      let taskList = '';
+      for (const [goal, tasks] of Object.entries(tasksByGoal)) {
+        taskList += `\n🎯 *Für "${goal}":*\n`;
+        for (const t of tasks) {
+          taskList += `   ${priorityEmoji[t.priority]} ${t.title}\n`;
+          taskList += `   ${energyEmoji[t.energy_required]} ~${t.estimated_minutes}min\n`;
+          taskList += `   _→ ${t.reason}_\n\n`;
+        }
+      }
       
       await ctx.editMessageText(
-        `🤖 *AI Task-Vorschläge*\n\n` +
-        `Basierend auf deiner Energie (${checkinData.energy}/10) und Stimmung (${checkinData.mood}/10):\n\n` +
-        `${taskList}\n\n` +
+        `🤖 *GOAL-FIRST Task-Vorschläge*\n\n` +
+        `📊 Energie: ${checkinData.energy}/10 | 😊 Stimmung: ${checkinData.mood}/10\n` +
+        `${taskList}\n` +
         `*Was möchtest du tun?*`,
         {
           parse_mode: 'Markdown',
@@ -1938,3 +2826,4 @@ async function handleCoachInteraction(ctx: BotContext, type: 'motivation' | 'dai
     );
   }
 }
+

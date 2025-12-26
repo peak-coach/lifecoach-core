@@ -59,6 +59,13 @@ export function setupScheduler() {
     timezone: 'Europe/Berlin',
   });
 
+  // Pomodoro Check - Every minute (check for completed sessions)
+  cron.schedule('* * * * *', async () => {
+    await checkPomodoroSessions();
+  }, {
+    timezone: 'Europe/Berlin',
+  });
+
   logger.info('Scheduler initialized with Europe/Berlin timezone');
 }
 
@@ -393,6 +400,91 @@ async function sendProactiveInsights() {
     }
   } catch (error) {
     logger.error('Error in sendProactiveInsights:', error);
+  }
+}
+
+async function checkPomodoroSessions() {
+  try {
+    const now = new Date();
+
+    // Get active pomodoro sessions that should have ended
+    const { data: expiredSessions } = await supabase
+      .from('pomodoro_sessions')
+      .select(`
+        id,
+        user_id,
+        task_id,
+        type,
+        duration_minutes,
+        started_at,
+        status,
+        users!inner (telegram_id, name),
+        tasks (title)
+      `)
+      .eq('status', 'active')
+      .is('ended_at', null);
+
+    if (!expiredSessions || expiredSessions.length === 0) return;
+
+    for (const session of expiredSessions) {
+      const startedAt = new Date(session.started_at);
+      const endTime = new Date(startedAt.getTime() + session.duration_minutes * 60 * 1000);
+
+      if (now >= endTime) {
+        const user = session.users as any;
+        if (!user?.telegram_id) continue;
+
+        // Mark session as completed
+        await supabase
+          .from('pomodoro_sessions')
+          .update({ status: 'completed', ended_at: endTime.toISOString() })
+          .eq('id', session.id);
+
+        const task = session.tasks as any;
+        
+        if (session.type === 'work') {
+          const taskInfo = task?.title ? `\n📋 Task: "${task.title}"` : '';
+          await bot.api.sendMessage(
+            user.telegram_id,
+            `🍅 *Pomodoro abgeschlossen!* 🎉\n` +
+            `${session.duration_minutes} Min fokussiert gearbeitet!${taskInfo}\n\n` +
+            `Zeit für eine Pause!`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '☕ Kurze Pause (5 Min)', callback_data: 'pomodoro_break_short' },
+                    { text: '🧘 Lange Pause (15 Min)', callback_data: 'pomodoro_break_long' },
+                  ],
+                  [
+                    { text: '🍅 Nächste Pomodoro', callback_data: 'pomodoro_start' },
+                  ],
+                ],
+              },
+            }
+          );
+          logger.info(`Pomodoro work completed: user ${session.user_id}`);
+        } else {
+          await bot.api.sendMessage(
+            user.telegram_id,
+            `⏰ *Pause vorbei!*\n\nBereit für die nächste Fokus-Session? 💪`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: '🍅 Neue Pomodoro starten', callback_data: 'pomodoro_start' }],
+                  [{ text: '📋 Tasks anzeigen', callback_data: 'menu_tasks' }],
+                ],
+              },
+            }
+          );
+          logger.info(`Pomodoro break completed: user ${session.user_id}`);
+        }
+      }
+    }
+  } catch (error) {
+    logger.error('Error in checkPomodoroSessions:', error);
   }
 }
 

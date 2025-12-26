@@ -1036,37 +1036,77 @@ export default function AkademiePage() {
           </div>
         </section>
 
-        {/* Quick Actions */}
-        <section className="grid grid-cols-2 gap-4">
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => router.push('/akademie/diagnose')}
-            className="p-4 bg-white/5 rounded-xl border border-white/10 hover:border-white/20 transition-all flex items-center gap-3"
-          >
-            <div className="p-2 bg-emerald-500/20 rounded-lg">
-              <TrendingUp className="w-5 h-5 text-emerald-400" />
-            </div>
-            <div className="text-left">
-              <p className="font-medium">Diagnose</p>
-              <p className="text-sm text-white/60">Finde deine Stärken</p>
-            </div>
-          </motion.button>
+        {/* Tools Section */}
+        <section>
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-amber-400" />
+            Deine Tools
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {/* Actions */}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => router.push('/aktionen')}
+              className="p-4 bg-gradient-to-br from-rose-500/20 to-pink-500/10 rounded-xl border border-rose-500/30 hover:border-rose-500/50 transition-all flex flex-col items-center gap-2 text-center"
+            >
+              <div className="p-3 bg-rose-500/20 rounded-xl">
+                <Target className="w-6 h-6 text-rose-400" />
+              </div>
+              <div>
+                <p className="font-medium">Aktionen</p>
+                <p className="text-xs text-white/60">Umsetzen</p>
+              </div>
+            </motion.button>
 
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => router.push('/akademie/skill-tree')}
-            className="p-4 bg-white/5 rounded-xl border border-white/10 hover:border-white/20 transition-all flex items-center gap-3"
-          >
-            <div className="p-2 bg-purple-500/20 rounded-lg">
-              <Zap className="w-5 h-5 text-purple-400" />
-            </div>
-            <div className="text-left">
-              <p className="font-medium">Skill-Tree</p>
-              <p className="text-sm text-white/60">Dein Fortschritt</p>
-            </div>
-          </motion.button>
+            {/* Books */}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => router.push('/buecher')}
+              className="p-4 bg-gradient-to-br from-amber-500/20 to-orange-500/10 rounded-xl border border-amber-500/30 hover:border-amber-500/50 transition-all flex flex-col items-center gap-2 text-center"
+            >
+              <div className="p-3 bg-amber-500/20 rounded-xl">
+                <BookOpen className="w-6 h-6 text-amber-400" />
+              </div>
+              <div>
+                <p className="font-medium">Bücher</p>
+                <p className="text-xs text-white/60">Lese-Journal</p>
+              </div>
+            </motion.button>
+
+            {/* Diagnose */}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => router.push('/akademie/diagnose')}
+              className="p-4 bg-gradient-to-br from-emerald-500/20 to-teal-500/10 rounded-xl border border-emerald-500/30 hover:border-emerald-500/50 transition-all flex flex-col items-center gap-2 text-center"
+            >
+              <div className="p-3 bg-emerald-500/20 rounded-xl">
+                <TrendingUp className="w-6 h-6 text-emerald-400" />
+              </div>
+              <div>
+                <p className="font-medium">Diagnose</p>
+                <p className="text-xs text-white/60">Stärken finden</p>
+              </div>
+            </motion.button>
+
+            {/* Skill-Tree */}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => router.push('/akademie/skill-tree')}
+              className="p-4 bg-gradient-to-br from-purple-500/20 to-indigo-500/10 rounded-xl border border-purple-500/30 hover:border-purple-500/50 transition-all flex flex-col items-center gap-2 text-center"
+            >
+              <div className="p-3 bg-purple-500/20 rounded-xl">
+                <Zap className="w-6 h-6 text-purple-400" />
+              </div>
+              <div>
+                <p className="font-medium">Skill-Tree</p>
+                <p className="text-xs text-white/60">Fortschritt</p>
+              </div>
+            </motion.button>
+          </div>
         </section>
       </main>
 

@@ -13,17 +13,16 @@ import { logger } from '../utils/logger';
 // ============================================
 
 export function getGoalCategoryKeyboard() {
+  // Categories must match DB constraint: career, health, learning, finance, relationships, personal
   return new InlineKeyboard()
     .text('💼 Karriere/Business', 'goal_cat_career')
-    .text('💪 Fitness/Gesundheit', 'goal_cat_fitness')
+    .text('💪 Fitness/Gesundheit', 'goal_cat_health')
     .row()
     .text('📚 Lernen/Skills', 'goal_cat_learning')
     .text('💰 Finanzen', 'goal_cat_finance')
     .row()
-    .text('🧘 Mindset/Mental', 'goal_cat_mental')
+    .text('🧘 Persönlich/Mindset', 'goal_cat_personal')
     .text('❤️ Beziehungen', 'goal_cat_relationships')
-    .row()
-    .text('🎯 Sonstiges', 'goal_cat_other')
     .row()
     .text('❌ Abbrechen', 'show_main_menu');
 }
@@ -92,8 +91,8 @@ export async function showGoalsList(ctx: BotContext, userId: string, edit = fals
   }
 
   const categoryEmoji: Record<string, string> = {
-    career: '💼', fitness: '💪', learning: '📚',
-    finance: '💰', mental: '🧘', relationships: '❤️', other: '🎯'
+    career: '💼', health: '💪', learning: '📚',
+    finance: '💰', personal: '🧘', relationships: '❤️',
   };
 
   let message = `🎯 *Deine Ziele*\n\n`;
@@ -215,31 +214,97 @@ export async function startGoalCreation(ctx: BotContext) {
 export async function handleGoalTitle(ctx: BotContext, title: string) {
   if (!ctx.session.goalData) ctx.session.goalData = {};
   ctx.session.goalData.title = title;
-  ctx.session.step = 'goal_create_category';
-
-  await ctx.reply(
-    `✅ Ziel: *${title}*\n\n` +
-    `In welche *Kategorie* gehört dieses Ziel?`,
-    {
-      parse_mode: 'Markdown',
-      reply_markup: getGoalCategoryKeyboard(),
-    }
+  
+  // Show loading message
+  const loadingMsg = await ctx.reply(
+    `🧠 *Analysiere dein Ziel mit Expertenwissen...*\n\n` +
+    `⏳ Einen Moment bitte...`,
+    { parse_mode: 'Markdown' }
   );
+
+  try {
+    // Import and call goal refinement
+    const { refineGoalWithExpertise, formatRefinedGoalMessage } = await import('../services/goalRefinement');
+    const refined = await refineGoalWithExpertise(title);
+    
+    // Store refined data in session
+    ctx.session.goalData = {
+      ...ctx.session.goalData,
+      title: refined.refinedTitle,
+      originalTitle: title,
+      category: refined.category,
+      targetValue: refined.targetValue,
+      whyImportant: refined.whyImportant,
+      deadline: refined.deadline,
+      suggestedMilestones: refined.suggestedMilestones,
+      expertInsights: refined.expertInsights,
+    };
+    ctx.session.step = 'goal_confirm_refined';
+
+    // Format message
+    const message = formatRefinedGoalMessage(refined);
+
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      loadingMsg.message_id,
+      message + `\n\n*Möchtest du dieses optimierte Ziel übernehmen?*`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: new InlineKeyboard()
+          .text('✅ Ja, übernehmen!', 'goal_accept_refined')
+          .row()
+          .text('✏️ Anpassen', 'goal_modify_refined')
+          .text('🔄 Original nutzen', 'goal_use_original')
+          .row()
+          .text('❌ Abbrechen', 'menu_goals'),
+      }
+    );
+  } catch (error) {
+    logger.error('Error refining goal:', error);
+    
+    // Fallback to original flow
+    ctx.session.step = 'goal_create_category';
+    await ctx.api.editMessageText(
+      ctx.chat!.id,
+      loadingMsg.message_id,
+      `✅ Ziel: *${title}*\n\n` +
+      `In welche *Kategorie* gehört dieses Ziel?`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: getGoalCategoryKeyboard(),
+      }
+    );
+  }
+}
+
+// Map any category to DB-allowed values
+function mapCategoryToDb(category: string): string {
+  const map: Record<string, string> = {
+    'career': 'career',
+    'health': 'health',
+    'fitness': 'health',
+    'learning': 'learning',
+    'finance': 'finance',
+    'relationships': 'relationships',
+    'personal': 'personal',
+    'mental': 'personal',
+    'other': 'personal',
+  };
+  return map[category] || 'personal';
 }
 
 export async function handleGoalCategory(ctx: BotContext, category: string) {
   if (!ctx.session.goalData) return;
-  ctx.session.goalData.category = category;
+  ctx.session.goalData.category = mapCategoryToDb(category);
   ctx.session.step = 'goal_create_timeframe';
 
   const catText: Record<string, string> = {
     career: '💼 Karriere/Business',
-    fitness: '💪 Fitness/Gesundheit',
+    health: '💪 Fitness/Gesundheit',
     learning: '📚 Lernen/Skills',
     finance: '💰 Finanzen',
-    mental: '🧘 Mindset/Mental',
+    personal: '🧘 Persönlich/Mindset',
     relationships: '❤️ Beziehungen',
-    other: '🎯 Sonstiges'
   };
 
   await ctx.editMessageText(
@@ -347,7 +412,7 @@ export async function saveGoal(ctx: BotContext) {
       .insert({
         user_id: user.id,
         title: goalData.title,
-        category: goalData.category || 'other',
+        category: mapCategoryToDb(goalData.category || 'personal'),
         timeframe: goalData.timeframe,
         target_value: goalData.targetValue,
         current_value: 0,
@@ -363,10 +428,10 @@ export async function saveGoal(ctx: BotContext) {
     ctx.session.goalData = undefined;
 
     const categoryEmoji: Record<string, string> = {
-      career: '💼', fitness: '💪', learning: '📚',
-      finance: '💰', mental: '🧘', relationships: '❤️', other: '🎯'
+      career: '💼', health: '💪', learning: '📚',
+      finance: '💰', personal: '🧘', relationships: '❤️',
     };
-    const emoji = categoryEmoji[goalData.category || 'other'] || '🎯';
+    const emoji = categoryEmoji[mapCategoryToDb(goalData.category || 'personal')] || '🎯';
 
     await ctx.reply(
       `✅ *Ziel erstellt!*\n\n` +

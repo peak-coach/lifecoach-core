@@ -6,35 +6,90 @@ import { BotContext } from '../bot';
 import { InlineKeyboard } from 'grammy';
 import { supabase } from '../services/supabase';
 import { logger } from '../utils/logger';
+import { formatDate } from '../utils/helpers';
 
-// Haupt-Menü Keyboard
-export function getMainMenuKeyboard(workStatus?: string) {
+// Work Mode Types
+export type WorkMode = 'focus' | 'working' | 'off_work' | 'not_started';
+
+// Task/Habit counts for dynamic display
+export interface MenuCounts {
+  openTasks?: number;
+  totalTasks?: number;
+  completedHabits?: number;
+  totalHabits?: number;
+}
+
+// ============================================
+// 🎯 ULTRA-CLEAN HAUPTMENÜ
+// ============================================
+
+export function getMainMenuKeyboard(
+  workMode: WorkMode = 'not_started',
+  counts?: MenuCounts
+) {
   const keyboard = new InlineKeyboard();
   
-  // Show day start or feierabend button based on status
-  if (workStatus === 'working') {
-    keyboard.text('🏠 Feierabend', 'confirm_feierabend_quick');
-  } else if (workStatus === 'not_started' || !workStatus) {
-    keyboard.text('🚀 Tag starten', 'start_work_day');
+  // === TAGES-STATUS (kontextabhängig) ===
+  if (workMode === 'not_started') {
+    keyboard.text('☀️ Tag starten', 'start_day_flow').row();
+  } else if (workMode === 'working') {
+    keyboard
+      .text('💻 → Fokus', 'switch_to_focus')
+      .text('🏠 Feierabend', 'confirm_feierabend_quick')
+      .row();
+  } else if (workMode === 'focus') {
+    keyboard
+      .text('🏗️ → Arbeit', 'switch_to_working')
+      .text('🏠 Feierabend', 'confirm_feierabend_quick')
+      .row();
+  } else {
+    keyboard.text('☀️ Neuer Tag', 'start_day_flow').row();
   }
-  keyboard.text('📅 Tagestyp', 'change_day_type');
-  keyboard.row();
-  
+
+  // === HEUTE (Kernfunktionen) ===
+  const taskLabel = counts?.openTasks !== undefined 
+    ? `📋 Tasks (${counts.openTasks})` 
+    : '📋 Tasks';
+  const habitLabel = counts?.totalHabits !== undefined 
+    ? `🔄 Habits (${counts.completedHabits || 0}/${counts.totalHabits})` 
+    : '🔄 Habits';
+
   keyboard
-    .text('⚡ Quick-Task', 'quick_task_start')
-    .text('🍅 Pomodoro', 'menu_pomodoro')
-    .row()
-    .text('📋 Tasks', 'menu_tasks')
-    .text('🔄 Habits', 'menu_habits')
-    .row()
-    .text('🎯 Ziele', 'menu_goals')
-    .text('💬 Coach', 'menu_coach')
-    .row()
-    .text('🧠 Insights', 'show_smart_insights')
-    .text('⚙️ Settings', 'menu_settings');
-    
+    .text(taskLabel, 'menu_tasks')
+    .text(habitLabel, 'menu_habits')
+    .row();
+
+  // === SCHNELL-AKTIONEN ===
+  keyboard
+    .text('⚡ +Task', 'quick_task_start')
+    .text('🍅 Focus', 'menu_pomodoro')
+    .row();
+
+  // === MEHR (alles andere) ===
+  keyboard.text('📁 Mehr...', 'menu_more').row();
+
   return keyboard;
 }
+
+// ============================================
+// 📁 "MEHR" UNTERMENÜ
+// ============================================
+
+export function getMoreMenuKeyboard() {
+  return new InlineKeyboard()
+    .text('🎯 Ziele & Milestones', 'menu_goals')
+    .row()
+    .text('📊 Statistiken', 'menu_stats')
+    .text('💬 Coach', 'menu_coach')
+    .row()
+    .text('⚙️ Einstellungen', 'menu_settings')
+    .row()
+    .text('🔙 Zurück', 'show_main_menu');
+}
+
+// ============================================
+// START COMMAND
+// ============================================
 
 export async function startCommand(ctx: BotContext) {
   const telegramId = ctx.from?.id;
@@ -54,44 +109,115 @@ export async function startCommand(ctx: BotContext) {
       .single();
 
     if (existingUser) {
-      // Returning user - get today's status and show main menu
+      // Returning user - get today's status
       const hour = new Date().getHours();
       let greeting = 'Guten Tag';
-      if (hour < 12) greeting = 'Guten Morgen';
-      else if (hour >= 18) greeting = 'Guten Abend';
+      let emoji = '👋';
+      if (hour < 12) { greeting = 'Guten Morgen'; emoji = '☀️'; }
+      else if (hour >= 18) { greeting = 'Guten Abend'; emoji = '🌙'; }
 
       // Get today's work status
-      let workStatus = 'not_started';
+      let workMode: WorkMode = 'not_started';
+      let dayType = 'normal';
+      
       try {
-        const { data: status } = await supabase.rpc('get_today_status', {
-          p_user_id: existingUser.id
-        });
-        if (status) {
-          workStatus = status.work_status || 'not_started';
+        const today = formatDate(new Date());
+        const { data: workStatus } = await supabase
+          .from('work_status')
+          .select('work_mode, day_type')
+          .eq('user_id', existingUser.id)
+          .eq('date', today)
+          .single();
+        
+        if (workStatus) {
+          workMode = workStatus.work_mode || 'not_started';
+          dayType = workStatus.day_type || 'normal';
         }
       } catch (e) {
         // Ignore - use default
       }
 
-      // Build status line
-      let statusLine = '';
-      if (workStatus === 'working') {
-        statusLine = '\n💼 _Du bist aktuell bei der Arbeit_\n';
-      } else if (workStatus === 'off_work') {
-        statusLine = '\n🏠 _Feierabend - genieß deinen Abend!_\n';
+      // Get today's task stats
+      const today = formatDate(new Date());
+      const { data: tasks } = await supabase
+        .from('tasks')
+        .select('status')
+        .eq('user_id', existingUser.id)
+        .eq('scheduled_date', today);
+      
+      const totalTasks = tasks?.length || 0;
+      const completedTasks = tasks?.filter(t => t.status === 'completed').length || 0;
+      const openTasks = totalTasks - completedTasks;
+
+      // Get today's habit stats
+      const { data: habits } = await supabase
+        .from('habits')
+        .select('id')
+        .eq('user_id', existingUser.id)
+        .eq('is_active', true);
+      
+      const { data: habitLogs } = await supabase
+        .from('habit_logs')
+        .select('habit_id')
+        .eq('date', today)
+        .eq('completed', true);
+      
+      const totalHabits = habits?.length || 0;
+      const completedHabits = habitLogs?.length || 0;
+
+      // Menu counts for dynamic labels
+      const menuCounts: MenuCounts = {
+        openTasks,
+        totalTasks,
+        completedHabits,
+        totalHabits,
+      };
+
+      // Build status message
+      let statusEmoji = '';
+      let statusText = '';
+      
+      switch (workMode) {
+        case 'working':
+          statusEmoji = '🏗️';
+          statusText = 'Arbeitszeit';
+          break;
+        case 'focus':
+          statusEmoji = '💻';
+          statusText = 'Fokuszeit';
+          break;
+        case 'off_work':
+          statusEmoji = '🏠';
+          statusText = 'Feierabend';
+          break;
+        default:
+          statusEmoji = '⏳';
+          statusText = 'Tag noch nicht gestartet';
       }
 
+      const dayTypeEmoji = {
+        normal: '',
+        montage: ' 🔧',
+        recovery: ' 🧘',
+        urlaub: ' 🏖️',
+        krank: ' 🤒',
+      }[dayType] || '';
+
+      // Build clean status message
+      let statusLine = `${statusEmoji} ${statusText}${dayTypeEmoji}`;
+      
       await ctx.reply(
-        `${greeting}, ${firstName}! 👋\n\n` +
-        `🏆 *Peak Performance Coach*${statusLine}\n` +
+        `${emoji} ${greeting}, ${firstName}!\n\n` +
+        `${statusLine}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━\n\n` +
         `Was möchtest du tun?`,
         {
           parse_mode: 'Markdown',
-          reply_markup: getMainMenuKeyboard(workStatus),
+          reply_markup: getMainMenuKeyboard(workMode, menuCounts),
         }
       );
     } else {
-      // New user - create account and start onboarding
+      // New user - create account
       const { data: newUser, error } = await supabase
         .from('users')
         .insert({
@@ -121,10 +247,10 @@ export async function startCommand(ctx: BotContext) {
         `🏆 *Willkommen bei Peak Performance Coach!*\n\n` +
         `Hey ${firstName}! 👋\n\n` +
         `Ich bin dein persönlicher KI-Coach und helfe dir:\n\n` +
-        `✅ Deine Ziele zu erreichen\n` +
-        `✅ Produktiver zu werden\n` +
-        `✅ Bessere Gewohnheiten aufzubauen\n` +
-        `✅ Dich selbst besser kennenzulernen\n\n` +
+        `🎯 Deine Ziele zu erreichen\n` +
+        `📈 Produktiver zu werden\n` +
+        `💪 Bessere Gewohnheiten aufzubauen\n` +
+        `🧠 Den besten Weg für jedes Ziel zu finden\n\n` +
         `_Dein Account wurde erstellt!_`,
         {
           parse_mode: 'Markdown',

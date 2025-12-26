@@ -197,9 +197,9 @@ export function CommandPalette({ isOpen, onClose, onCreateQuickTask }: CommandPa
                       </p>
                     </div>
                   ) : (
-                    <div className="px-4 py-8 text-center text-muted-foreground text-sm">
-                      Keine Ergebnisse gefunden
-                    </div>
+                  <div className="px-4 py-8 text-center text-muted-foreground text-sm">
+                    Keine Ergebnisse gefunden
+                  </div>
                   )
                 ) : (
                   <>

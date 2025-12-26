@@ -48,10 +48,14 @@ interface SessionData {
   goalData?: {
     goalId?: string;
     title?: string;
+    originalTitle?: string;
     category?: string;
     timeframe?: string;
     targetValue?: number | null;
     whyImportant?: string | null;
+    deadline?: string;
+    suggestedMilestones?: string[];
+    expertInsights?: string[];
   };
 }
 
