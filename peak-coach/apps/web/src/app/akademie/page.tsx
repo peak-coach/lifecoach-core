@@ -85,36 +85,35 @@ const CATEGORIES: Category[] = [
 // Components
 // ============================================
 
-// XP Progress Bar
+// XP Progress Bar - STRONGER COLORS
 function XPProgressBar({ currentXP, level }: { currentXP: number; level: number }) {
-  const xpForNextLevel = level * 100;
   const xpInCurrentLevel = currentXP % 100;
   const progress = (xpInCurrentLevel / 100) * 100;
 
   return (
-    <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+    <div className="bg-gradient-to-r from-amber-500/10 to-orange-500/10 rounded-xl p-4 border-2 border-amber-500/30">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
+          <div className="p-1.5 bg-gradient-to-br from-amber-400 to-orange-500 rounded-lg shadow-lg shadow-amber-500/30">
             <Star className="w-4 h-4 text-white" />
           </div>
-          <span className="font-semibold">Level {level}</span>
+          <span className="font-bold text-amber-200">Level {level}</span>
         </div>
-        <span className="text-sm text-white/60">{xpInCurrentLevel} / 100 XP</span>
+        <span className="text-sm font-medium text-amber-300">{xpInCurrentLevel} / 100 XP</span>
       </div>
-      <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+      <div className="h-3 bg-black/30 rounded-full overflow-hidden">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${progress}%` }}
           transition={{ duration: 0.5 }}
-          className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full"
+          className="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full shadow-lg shadow-amber-500/50"
         />
       </div>
     </div>
   );
 }
 
-// Hero Learning Card
+// Hero Learning Card - STRONGER COLORS & MOBILE OPTIMIZED
 function HeroLearningCard({
   settings,
   onStartLearning,
@@ -137,7 +136,7 @@ function HeroLearningCard({
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 p-6"
+      className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-5 md:p-6 shadow-2xl shadow-purple-500/20"
     >
       {/* Background effects */}
       <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" />
@@ -239,12 +238,14 @@ function QuickActionCard({
   );
 }
 
-// Tool Button (larger)
+// Tool Button (larger) - STRONGER COLORS
 function ToolButton({
   icon: Icon,
   title,
   subtitle,
   gradient,
+  borderColor,
+  iconBg,
   onClick,
   badge,
 }: {
@@ -252,74 +253,82 @@ function ToolButton({
   title: string;
   subtitle: string;
   gradient: string;
+  borderColor: string;
+  iconBg: string;
   onClick: () => void;
   badge?: number;
 }) {
   return (
     <motion.button
       onClick={onClick}
-      whileHover={{ scale: 1.02 }}
-      whileTap={{ scale: 0.98 }}
-      className={`relative p-5 rounded-2xl bg-gradient-to-br ${gradient} border border-white/10 hover:border-white/20 transition-all text-center`}
+      whileHover={{ scale: 1.03, y: -2 }}
+      whileTap={{ scale: 0.97 }}
+      className={`relative p-4 md:p-5 rounded-2xl bg-gradient-to-br ${gradient} border-2 ${borderColor} hover:shadow-lg hover:shadow-white/5 transition-all text-center`}
     >
       {badge !== undefined && badge > 0 && (
-        <span className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold shadow-lg">
+        <span className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-xs font-bold shadow-lg animate-pulse">
           {badge}
         </span>
       )}
-      <div className="flex flex-col items-center gap-3">
-        <div className="p-3 bg-white/20 rounded-xl">
-          <Icon className="w-7 h-7" />
+      <div className="flex flex-col items-center gap-2 md:gap-3">
+        <div className={`p-3 ${iconBg} rounded-xl`}>
+          <Icon className="w-6 h-6 md:w-7 md:h-7" />
         </div>
         <div>
-          <p className="font-semibold text-lg">{title}</p>
-          <p className="text-sm opacity-70">{subtitle}</p>
+          <p className="font-semibold text-base md:text-lg">{title}</p>
+          <p className="text-xs md:text-sm opacity-80">{subtitle}</p>
         </div>
       </div>
     </motion.button>
   );
 }
 
-// Category Chip (compact)
+// Category Chip (compact) - STRONGER COLORS
 function CategoryChip({ category, onClick }: { category: Category; onClick: () => void }) {
   return (
     <motion.button
       onClick={onClick}
-      whileHover={{ scale: 1.05 }}
+      whileHover={{ scale: 1.05, y: -2 }}
       whileTap={{ scale: 0.95 }}
-      className="flex items-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-xl transition-all whitespace-nowrap"
+      className="flex items-center gap-2 px-4 py-3 bg-white/10 hover:bg-white/20 border-2 border-white/20 hover:border-white/40 rounded-xl transition-all whitespace-nowrap shadow-lg"
+      style={{ 
+        background: `linear-gradient(135deg, ${category.color}30 0%, transparent 100%)`,
+        borderColor: `${category.color}50`
+      }}
     >
       <span className="text-xl">{category.icon}</span>
-      <span className="font-medium">{category.name}</span>
-      <ChevronRight className="w-4 h-4 text-white/40" />
+      <span className="font-semibold">{category.name}</span>
+      <ChevronRight className="w-4 h-4 text-white/60" />
     </motion.button>
   );
 }
 
-// Goal Progress Card
+// Goal Progress Card - STRONGER COLORS
 function GoalProgressCard({ goal, onClick }: { goal: UserGoal; onClick: () => void }) {
   const progress = goal.totalModulesCompleted ? Math.min((goal.totalModulesCompleted / 10) * 100, 100) : 0;
   
   return (
     <motion.button
       onClick={onClick}
-      whileHover={{ scale: 1.01 }}
+      whileHover={{ scale: 1.01, y: -2 }}
       whileTap={{ scale: 0.99 }}
-      className="w-full p-4 bg-gradient-to-r from-indigo-500/20 to-purple-500/10 rounded-xl border border-indigo-500/30 hover:border-indigo-500/50 transition-all text-left"
+      className="w-full p-4 bg-gradient-to-r from-indigo-500/30 to-purple-500/20 rounded-xl border-2 border-indigo-500/50 hover:border-indigo-400 transition-all text-left shadow-lg shadow-indigo-500/10"
     >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <Target className="w-5 h-5 text-indigo-400" />
-          <span className="text-sm text-indigo-400 font-medium">Aktives Ziel</span>
+          <div className="p-1 bg-indigo-500/30 rounded-lg">
+            <Target className="w-4 h-4 text-indigo-300" />
+          </div>
+          <span className="text-sm text-indigo-300 font-semibold">Aktives Ziel</span>
         </div>
-        <span className="text-sm text-white/60">{Math.round(progress)}%</span>
+        <span className="text-sm font-bold text-indigo-200">{Math.round(progress)}%</span>
       </div>
-      <h3 className="font-semibold mb-2">{goal.title}</h3>
-      <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+      <h3 className="font-bold text-lg mb-3">{goal.title}</h3>
+      <div className="h-2.5 bg-black/30 rounded-full overflow-hidden">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${progress}%` }}
-          className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full"
+          className="h-full bg-gradient-to-r from-indigo-400 to-purple-400 rounded-full shadow-lg shadow-indigo-500/50"
         />
       </div>
     </motion.button>
@@ -714,12 +723,14 @@ export default function AkademiePage() {
             <Sparkles className="w-5 h-5 text-amber-400" />
             Deine Tools
           </h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
             <ToolButton
               icon={Target}
               title="Aktionen"
               subtitle="Umsetzen"
-              gradient="from-rose-500/20 to-pink-500/10"
+              gradient="from-rose-600/40 to-pink-600/20"
+              borderColor="border-rose-500/50 hover:border-rose-400"
+              iconBg="bg-rose-500/40"
               onClick={() => router.push('/aktionen')}
               badge={pendingActions}
             />
@@ -727,35 +738,45 @@ export default function AkademiePage() {
               icon={BookOpen}
               title="Bücher"
               subtitle="Lese-Journal"
-              gradient="from-amber-500/20 to-orange-500/10"
+              gradient="from-amber-600/40 to-orange-600/20"
+              borderColor="border-amber-500/50 hover:border-amber-400"
+              iconBg="bg-amber-500/40"
               onClick={() => router.push('/buecher')}
             />
             <ToolButton
               icon={TrendingUp}
               title="Diagnose"
               subtitle="Stärken finden"
-              gradient="from-emerald-500/20 to-teal-500/10"
+              gradient="from-emerald-600/40 to-teal-600/20"
+              borderColor="border-emerald-500/50 hover:border-emerald-400"
+              iconBg="bg-emerald-500/40"
               onClick={() => router.push('/akademie/diagnose')}
             />
             <ToolButton
               icon={Zap}
               title="Skill-Tree"
               subtitle="Deine Skills"
-              gradient="from-purple-500/20 to-indigo-500/10"
+              gradient="from-purple-600/40 to-indigo-600/20"
+              borderColor="border-purple-500/50 hover:border-purple-400"
+              iconBg="bg-purple-500/40"
               onClick={() => router.push('/akademie/skill-tree')}
             />
             <ToolButton
               icon={BarChart3}
               title="Analytics"
               subtitle="Statistiken"
-              gradient="from-cyan-500/20 to-blue-500/10"
+              gradient="from-cyan-600/40 to-blue-600/20"
+              borderColor="border-cyan-500/50 hover:border-cyan-400"
+              iconBg="bg-cyan-500/40"
               onClick={() => router.push('/akademie/analytics')}
             />
             <ToolButton
               icon={RefreshCw}
               title="Reviews"
               subtitle="Wiederholen"
-              gradient="from-indigo-500/20 to-violet-500/10"
+              gradient="from-indigo-600/40 to-violet-600/20"
+              borderColor="border-indigo-500/50 hover:border-indigo-400"
+              iconBg="bg-indigo-500/40"
               onClick={() => router.push('/akademie/review')}
               badge={reviewsDue}
             />
@@ -779,27 +800,27 @@ export default function AkademiePage() {
           </div>
         </section>
 
-        {/* 7. Stats Overview */}
-        <section className="grid grid-cols-4 gap-3">
-          <div className="bg-white/5 rounded-xl p-3 text-center border border-white/10">
+        {/* 7. Stats Overview - STRONGER COLORS */}
+        <section className="grid grid-cols-4 gap-2 md:gap-3">
+          <div className="bg-gradient-to-br from-orange-500/20 to-red-500/10 rounded-xl p-3 text-center border border-orange-500/30">
             <Flame className="w-5 h-5 text-orange-400 mx-auto mb-1" />
-            <p className="text-xl font-bold">{settings.streak_current}</p>
-            <p className="text-xs text-white/50">Streak</p>
+            <p className="text-lg md:text-xl font-bold text-orange-200">{settings.streak_current}</p>
+            <p className="text-xs text-orange-300/70">Streak</p>
           </div>
-          <div className="bg-white/5 rounded-xl p-3 text-center border border-white/10">
+          <div className="bg-gradient-to-br from-amber-500/20 to-yellow-500/10 rounded-xl p-3 text-center border border-amber-500/30">
             <Trophy className="w-5 h-5 text-amber-400 mx-auto mb-1" />
-            <p className="text-xl font-bold">{settings.streak_best}</p>
-            <p className="text-xs text-white/50">Best</p>
+            <p className="text-lg md:text-xl font-bold text-amber-200">{settings.streak_best}</p>
+            <p className="text-xs text-amber-300/70">Best</p>
           </div>
-          <div className="bg-white/5 rounded-xl p-3 text-center border border-white/10">
+          <div className="bg-gradient-to-br from-indigo-500/20 to-purple-500/10 rounded-xl p-3 text-center border border-indigo-500/30">
             <BookOpen className="w-5 h-5 text-indigo-400 mx-auto mb-1" />
-            <p className="text-xl font-bold">{settings.total_modules_completed}</p>
-            <p className="text-xs text-white/50">Module</p>
+            <p className="text-lg md:text-xl font-bold text-indigo-200">{settings.total_modules_completed}</p>
+            <p className="text-xs text-indigo-300/70">Module</p>
           </div>
-          <div className="bg-white/5 rounded-xl p-3 text-center border border-white/10">
+          <div className="bg-gradient-to-br from-purple-500/20 to-pink-500/10 rounded-xl p-3 text-center border border-purple-500/30">
             <Star className="w-5 h-5 text-purple-400 mx-auto mb-1" />
-            <p className="text-xl font-bold">{settings.total_xp || 0}</p>
-            <p className="text-xs text-white/50">XP</p>
+            <p className="text-lg md:text-xl font-bold text-purple-200">{settings.total_xp || 0}</p>
+            <p className="text-xs text-purple-300/70">XP</p>
           </div>
         </section>
       </main>
