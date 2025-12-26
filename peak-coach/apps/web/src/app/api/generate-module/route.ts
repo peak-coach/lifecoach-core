@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { createClient } from '@supabase/supabase-js';
 import { EXPERT_KNOWLEDGE, detectCategoryFromGoal } from '@/lib/expertKnowledge';
 
 export const dynamic = 'force-dynamic';
+
+// Supabase for book highlights lookup
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 // Category icons mapping
 const CATEGORY_ICONS: Record<string, string> = {
@@ -79,7 +86,45 @@ export async function POST(request: NextRequest) {
       userLevel = 'intermediate',
       isRetry = false,
       includeVideo = true,  // NEU: Video-Empfehlung?
+      userId, // Für Buch-Highlights Lookup
     } = await request.json();
+    
+    // NEU: Relevante Buch-Highlights finden
+    let relevantBookHighlights: { highlight_text: string; book_title: string; author: string | null }[] = [];
+    if (userId) {
+      try {
+        // Suche Highlights die zum Thema passen könnten
+        const { data: highlights } = await supabase
+          .from('book_highlights')
+          .select(`
+            highlight_text,
+            books:book_id (
+              title,
+              author
+            )
+          `)
+          .eq('user_id', userId)
+          .limit(50);
+        
+        if (highlights && highlights.length > 0) {
+          // Simple keyword matching - suche nach relevanten Highlights
+          const keywords = goalTitle.toLowerCase().split(' ').filter((w: string) => w.length > 3);
+          relevantBookHighlights = highlights
+            .filter((h: any) => {
+              const text = h.highlight_text.toLowerCase();
+              return keywords.some((kw: string) => text.includes(kw));
+            })
+            .slice(0, 3)
+            .map((h: any) => ({
+              highlight_text: h.highlight_text,
+              book_title: h.books?.title || 'Unbekannt',
+              author: h.books?.author || null,
+            }));
+        }
+      } catch (error) {
+        console.error('Error fetching book highlights:', error);
+      }
+    }
 
     // Detect category and get expert knowledge
     const detectedCategory = detectCategoryFromGoal(goalTitle) || category || 'learning';
@@ -133,6 +178,11 @@ ${previousTopics.length > 0 ? `- Bereits gelernt: ${previousTopics.join(', ')} (
 - Beispiele: ${level.examples}
 - Übungen: ${level.exercises}
 - Pre-Test: ${level.preTestDifficulty}
+
+📖 RELEVANTE BUCH-HIGHLIGHTS DES USERS:
+${relevantBookHighlights.length > 0 
+  ? relevantBookHighlights.map(h => `- "${h.highlight_text}" (aus "${h.book_title}"${h.author ? ` von ${h.author}` : ''})`).join('\n')
+  : '(Keine relevanten Highlights gefunden)'}
 
 🧠 EXPERTENWISSEN (nutze diese Quellen!):
 ${knowledge.sources.slice(0, 5).join(', ')}
@@ -434,10 +484,13 @@ STEP 8: REFLECT (30 Sek) - Reflection Prompts
         nextTopic: learningPath[moduleNumber] || null,
         progress: Math.round((moduleNumber / totalModules) * 100),
       },
+      // NEU: Buch-Referenzen für Cross-Referenzen UI
+      bookReferences: relevantBookHighlights.length > 0 ? relevantBookHighlights : null,
       meta: {
         generatedAt: new Date().toISOString(),
         model: process.env.OPENAI_MODEL || 'gpt-4o',
         hasVideo: !!videoRecommendation,
+        hasBookReferences: relevantBookHighlights.length > 0,
         skillId,
       },
     });

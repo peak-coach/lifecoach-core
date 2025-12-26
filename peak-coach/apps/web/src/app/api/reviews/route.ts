@@ -8,38 +8,98 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-// GET: Fetch due reviews for a user
+// GET: Fetch due reviews for a user (modules + book highlights)
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('userId');
+    const type = searchParams.get('type'); // 'all', 'modules', 'books'
 
     if (!userId) {
       return NextResponse.json({ error: 'userId required' }, { status: 400 });
     }
 
-    // Get reviews that are due (next_review_date <= today)
     const today = new Date().toISOString().split('T')[0];
+    const reviews: any[] = [];
 
-    const { data: reviews, error } = await supabase
-      .from('spaced_repetition')
-      .select('*')
-      .eq('user_id', userId)
-      .lte('next_review_date', today)
-      .order('next_review_date', { ascending: true });
+    // Fetch MODULE reviews (unless type='books')
+    if (type !== 'books') {
+      const { data: moduleReviews, error: moduleError } = await supabase
+        .from('spaced_repetition')
+        .select('*')
+        .eq('user_id', userId)
+        .lte('next_review_date', today)
+        .order('next_review_date', { ascending: true });
 
-    if (error) {
-      console.error('Error fetching reviews:', error);
-      return NextResponse.json({ reviews: [], count: 0 });
+      if (!moduleError && moduleReviews) {
+        reviews.push(...moduleReviews.map(r => ({
+          ...r,
+          type: 'module',
+        })));
+      }
     }
 
+    // Fetch BOOK HIGHLIGHT reviews (unless type='modules')
+    if (type !== 'modules') {
+      const { data: bookHighlights, error: bookError } = await supabase
+        .from('book_highlights')
+        .select(`
+          id,
+          highlight_text,
+          user_note,
+          page_number,
+          next_review_date,
+          interval_days,
+          ease_factor,
+          repetitions,
+          book_id,
+          books:book_id (
+            id,
+            title,
+            author
+          )
+        `)
+        .eq('user_id', userId)
+        .lte('next_review_date', today)
+        .order('next_review_date', { ascending: true });
+
+      if (!bookError && bookHighlights) {
+        reviews.push(...bookHighlights.map((h: any) => ({
+          id: h.id,
+          type: 'book',
+          module_id: `book-${h.book_id}`,
+          module_title: h.books?.title || 'Unbekanntes Buch',
+          category: 'Buch',
+          book_author: h.books?.author,
+          highlight_text: h.highlight_text,
+          user_note: h.user_note,
+          page_number: h.page_number,
+          review_questions: [{
+            question: h.highlight_text,
+            answer: h.user_note || 'Denke an die Bedeutung dieses Highlights.',
+          }],
+          interval_days: h.interval_days || 1,
+          repetitions: h.repetitions || 0,
+          ease_factor: h.ease_factor || 2.5,
+          next_review_date: h.next_review_date,
+        })));
+      }
+    }
+
+    // Sort by next_review_date
+    reviews.sort((a, b) => 
+      new Date(a.next_review_date).getTime() - new Date(b.next_review_date).getTime()
+    );
+
     return NextResponse.json({
-      reviews: reviews || [],
-      count: reviews?.length || 0,
+      reviews,
+      count: reviews.length,
+      moduleCount: reviews.filter(r => r.type === 'module').length,
+      bookCount: reviews.filter(r => r.type === 'book').length,
     });
   } catch (error) {
     console.error('Error in reviews GET:', error);
-    return NextResponse.json({ reviews: [], count: 0 });
+    return NextResponse.json({ reviews: [], count: 0, moduleCount: 0, bookCount: 0 });
   }
 }
 
@@ -96,10 +156,11 @@ export async function POST(request: NextRequest) {
 }
 
 // PATCH: Update review after user completes it (SM-2 algorithm)
+// Supports both module reviews (spaced_repetition) and book highlights
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-    const { reviewId, userId, quality } = body;
+    const { reviewId, userId, quality, type = 'module' } = body;
     
     // Quality: 0-5 (0=complete blackout, 5=perfect response)
     // We'll simplify to: 0=forgot, 3=hard, 4=good, 5=easy
@@ -108,9 +169,12 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'reviewId, userId, and quality required' }, { status: 400 });
     }
 
+    // Determine table based on type
+    const table = type === 'book' ? 'book_highlights' : 'spaced_repetition';
+
     // Fetch current review data
     const { data: current, error: fetchError } = await supabase
-      .from('spaced_repetition')
+      .from(table)
       .select('*')
       .eq('id', reviewId)
       .eq('user_id', userId)
@@ -121,7 +185,9 @@ export async function PATCH(request: NextRequest) {
     }
 
     // SM-2 Algorithm
-    let { interval_days, ease_factor, repetitions } = current;
+    let interval_days = current.interval_days || 1;
+    let ease_factor = current.ease_factor || 2.5;
+    let repetitions = current.repetitions || 0;
     
     if (quality < 3) {
       // Failed - reset
@@ -148,11 +214,11 @@ export async function PATCH(request: NextRequest) {
     nextReviewDate.setDate(nextReviewDate.getDate() + interval_days);
 
     const { error: updateError } = await supabase
-      .from('spaced_repetition')
+      .from(table)
       .update({
         interval_days,
         ease_factor,
-        repetitions, // Fixed: was repetition_count
+        repetitions,
         next_review_date: nextReviewDate.toISOString().split('T')[0],
         last_reviewed_at: new Date().toISOString(),
       })

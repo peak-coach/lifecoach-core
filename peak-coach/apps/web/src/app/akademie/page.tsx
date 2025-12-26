@@ -253,15 +253,82 @@ function LearningPathCard({ path, onClick }: { path: LearningPath; onClick: () =
   );
 }
 
-// Today's Learning Card
+// Skeleton Loading Animation
+function SkeletonLoader() {
+  return (
+    <div className="animate-pulse">
+      <div className="h-4 bg-white/10 rounded w-3/4 mb-2" />
+      <div className="h-3 bg-white/10 rounded w-1/2" />
+    </div>
+  );
+}
+
+// Today's Learning Card with Smart Recommendations
 function TodaysLearningCard({ 
   settings, 
-  onStartLearning 
+  onStartLearning,
+  reviewsDue,
+  pendingActions,
+  weakSkills,
+  isLoading,
 }: { 
   settings: LearningSettings;
   onStartLearning: () => void;
+  reviewsDue?: number;
+  pendingActions?: number;
+  weakSkills?: { name: string; mastery: number }[];
+  isLoading?: boolean;
 }) {
   const levelConfig = LEARNING_LEVELS[settings.learning_level];
+
+  // Smart Recommendation Logic
+  const getRecommendation = () => {
+    // Priority 1: Reviews due (spaced repetition is most time-sensitive)
+    if (reviewsDue && reviewsDue > 0) {
+      return {
+        type: 'review' as const,
+        icon: '🔄',
+        title: `${reviewsDue} Reviews fällig`,
+        description: 'Spaced Repetition hält dein Wissen frisch',
+        action: 'Reviews starten',
+        priority: 'high',
+      };
+    }
+    // Priority 2: Weak skills to practice
+    if (weakSkills && weakSkills.length > 0) {
+      const weakest = weakSkills[0];
+      return {
+        type: 'weakness' as const,
+        icon: '🎯',
+        title: `Schwäche: ${weakest.name}`,
+        description: `Nur ${weakest.mastery}% Mastery - Zeit zum Üben!`,
+        action: 'Schwäche beheben',
+        priority: 'medium',
+      };
+    }
+    // Priority 3: Pending actions
+    if (pendingActions && pendingActions > 0) {
+      return {
+        type: 'action' as const,
+        icon: '⚡',
+        title: `${pendingActions} offene Actions`,
+        description: 'Setze dein Wissen in die Praxis um',
+        action: 'Actions ansehen',
+        priority: 'medium',
+      };
+    }
+    // Default: New learning
+    return {
+      type: 'new' as const,
+      icon: '📖',
+      title: 'Neue Lektion',
+      description: 'Lerne etwas Neues basierend auf deinen Zielen',
+      action: 'Jetzt lernen',
+      priority: 'normal',
+    };
+  };
+
+  const recommendation = getRecommendation();
   
   return (
     <motion.div
@@ -288,19 +355,47 @@ function TodaysLearningCard({
           </div>
         </div>
 
-        <div className="bg-white/10 rounded-xl p-4 mb-4">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 bg-white/20 rounded-lg">
-              <BookOpen className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="font-medium">Deine Mikro-Lektion</p>
-              <p className="text-sm text-white/70">Basierend auf deinen Zielen</p>
-            </div>
+        {/* Smart Recommendation */}
+        <div className={`rounded-xl p-4 mb-4 ${
+          recommendation.priority === 'high' 
+            ? 'bg-amber-500/20 border border-amber-500/30' 
+            : 'bg-white/10'
+        }`}>
+          {isLoading ? (
+            <SkeletonLoader />
+          ) : (
+            <>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-2xl">{recommendation.icon}</span>
+                <div>
+                  <p className="font-medium">{recommendation.title}</p>
+                  <p className="text-sm text-white/70">{recommendation.description}</p>
+                </div>
+              </div>
+              {recommendation.priority === 'high' && (
+                <div className="flex items-center gap-2 mt-2 text-amber-300 text-xs">
+                  <Sparkles className="w-3 h-3" />
+                  <span>Empfohlen für heute</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Quick Stats Row */}
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          <div className="bg-white/10 rounded-lg p-2 text-center">
+            <p className="text-lg font-bold">{reviewsDue || 0}</p>
+            <p className="text-xs text-white/60">Reviews</p>
           </div>
-          <p className="text-sm text-white/80 mb-2">
-            📖 Heute lernst du etwas Neues aus deinem aktiven Lernpfad...
-          </p>
+          <div className="bg-white/10 rounded-lg p-2 text-center">
+            <p className="text-lg font-bold">{pendingActions || 0}</p>
+            <p className="text-xs text-white/60">Actions</p>
+          </div>
+          <div className="bg-white/10 rounded-lg p-2 text-center">
+            <p className="text-lg font-bold">{weakSkills?.length || 0}</p>
+            <p className="text-xs text-white/60">Schwächen</p>
+          </div>
         </div>
 
         <motion.button
@@ -310,7 +405,7 @@ function TodaysLearningCard({
           className="w-full py-3 bg-white text-indigo-700 font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-white/90 transition-colors"
         >
           <Play className="w-5 h-5" />
-          Jetzt starten
+          {recommendation.action}
         </motion.button>
       </div>
     </motion.div>
@@ -682,9 +777,12 @@ export default function AkademiePage() {
   });
   const [activePath, setActivePath] = useState<LearningPath | null>(null);
   const [reviewsDue, setReviewsDue] = useState(0);
+  const [pendingActions, setPendingActions] = useState(0);
+  const [weakSkills, setWeakSkills] = useState<{ name: string; mastery: number }[]>([]);
   const [pendingTransfer, setPendingTransfer] = useState<PendingTransfer | null>(null);
   const [lastLearnedCategory, setLastLearnedCategory] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRecommendationLoading, setIsRecommendationLoading] = useState(true);
 
   // Fetch user goals
   const fetchGoals = async () => {
@@ -779,9 +877,11 @@ export default function AkademiePage() {
     }
   };
 
-  // Fetch reviews due count and pending transfers
+  // Fetch reviews due count, pending transfers, actions, and weak skills
   const fetchReviewsAndTransfers = async () => {
     if (!user?.email) return;
+    
+    setIsRecommendationLoading(true);
     
     try {
       const supabase = createClient();
@@ -791,10 +891,31 @@ export default function AkademiePage() {
       
       if (!authUser?.id) return;
 
-      // Fetch due reviews count - uses AUTH user ID
+      // Fetch due reviews count (modules + books) - uses AUTH user ID
       const reviewsResponse = await fetch(`/api/reviews?userId=${authUser.id}`);
       const reviewsData = await reviewsResponse.json();
       setReviewsDue(reviewsData.count || 0);
+
+      // Fetch pending actions count
+      const { count: actionsCount } = await supabase
+        .from('actions')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', authUser.id)
+        .eq('status', 'pending');
+      setPendingActions(actionsCount || 0);
+
+      // Fetch weak skills (lowest mastery)
+      const { data: weakSkillsData } = await supabase
+        .from('goal_skills')
+        .select('skill_name, mastery_level')
+        .eq('user_id', authUser.id)
+        .eq('is_weakness', true)
+        .order('mastery_level', { ascending: true })
+        .limit(3);
+      
+      if (weakSkillsData) {
+        setWeakSkills(weakSkillsData.map(s => ({ name: s.skill_name, mastery: s.mastery_level })));
+      }
 
       // Fetch pending transfer verification - uses AUTH user ID
       const transferResponse = await fetch(`/api/transfer?userId=${authUser.id}`);
@@ -816,6 +937,8 @@ export default function AkademiePage() {
       }
     } catch (error) {
       console.error('Error fetching reviews/transfers:', error);
+    } finally {
+      setIsRecommendationLoading(false);
     }
   };
 
@@ -993,10 +1116,14 @@ export default function AkademiePage() {
           />
         )}
 
-        {/* Today's Learning */}
+        {/* Today's Learning with Smart Recommendations */}
         <TodaysLearningCard 
           settings={settings} 
           onStartLearning={handleStartLearning}
+          reviewsDue={reviewsDue}
+          pendingActions={pendingActions}
+          weakSkills={weakSkills}
+          isLoading={isRecommendationLoading}
         />
 
         {/* Reviews Due */}
@@ -1103,7 +1230,23 @@ export default function AkademiePage() {
               </div>
               <div>
                 <p className="font-medium">Skill-Tree</p>
-                <p className="text-xs text-white/60">Fortschritt</p>
+                <p className="text-xs text-white/60">Skills</p>
+              </div>
+            </motion.button>
+
+            {/* Analytics */}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => router.push('/akademie/analytics')}
+              className="p-4 bg-gradient-to-br from-cyan-500/20 to-blue-500/10 rounded-xl border border-cyan-500/30 hover:border-cyan-500/50 transition-all flex flex-col items-center gap-2 text-center"
+            >
+              <div className="p-3 bg-cyan-500/20 rounded-xl">
+                <TrendingUp className="w-6 h-6 text-cyan-400" />
+              </div>
+              <div>
+                <p className="font-medium">Analytics</p>
+                <p className="text-xs text-white/60">Statistiken</p>
               </div>
             </motion.button>
           </div>

@@ -15,6 +15,8 @@ import {
   ThumbsUp,
   ThumbsDown,
   RotateCcw,
+  BookOpen,
+  Quote,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
@@ -27,10 +29,16 @@ import confetti from 'canvas-confetti';
 
 interface ReviewItem {
   id: string;
+  type: 'module' | 'book';
   module_id: string;
   module_title: string;
   category: string;
   concept?: string;
+  // Book-specific fields
+  highlight_text?: string;
+  user_note?: string;
+  page_number?: number;
+  book_author?: string;
   review_questions: {
     question: string;
     answer: string;
@@ -99,25 +107,65 @@ function ReviewCard({
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-2xl mx-auto">
           {/* Header */}
-          <div className="flex items-center gap-2 text-indigo-400 mb-4">
-            <RefreshCw className="w-5 h-5" />
-            <span className="text-sm font-medium uppercase tracking-wider">SPACED REPETITION</span>
+          <div className="flex items-center gap-2 mb-4">
+            {review.type === 'book' ? (
+              <>
+                <BookOpen className="w-5 h-5 text-amber-400" />
+                <span className="text-sm font-medium uppercase tracking-wider text-amber-400">BUCH-HIGHLIGHT</span>
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-5 h-5 text-indigo-400" />
+                <span className="text-sm font-medium uppercase tracking-wider text-indigo-400">SPACED REPETITION</span>
+              </>
+            )}
           </div>
 
-          {/* Module Info */}
-          <div className="bg-white/5 rounded-xl p-4 mb-6">
-            <p className="text-sm text-white/60 mb-1">{review.category}</p>
+          {/* Module/Book Info */}
+          <div className={`rounded-xl p-4 mb-6 ${
+            review.type === 'book' 
+              ? 'bg-amber-500/10 border border-amber-500/20' 
+              : 'bg-white/5'
+          }`}>
+            <div className="flex items-center gap-2">
+              {review.type === 'book' && <BookOpen className="w-4 h-4 text-amber-400" />}
+              <p className="text-sm text-white/60">{review.category}</p>
+            </div>
             <h3 className="font-semibold">{review.module_title}</h3>
+            {review.book_author && (
+              <p className="text-sm text-white/50">von {review.book_author}</p>
+            )}
+            {review.page_number && (
+              <p className="text-xs text-white/40 mt-1">Seite {review.page_number}</p>
+            )}
             <p className="text-xs text-white/40 mt-2">
               Wiederholung #{review.repetitions + 1} • 
               Nächste in {review.interval_days} Tag{review.interval_days !== 1 ? 'en' : ''}
             </p>
           </div>
 
-          {/* Question */}
-          <div className="bg-gradient-to-br from-indigo-500/20 to-purple-500/20 rounded-xl p-6 border border-indigo-500/30 mb-6">
-            <p className="text-lg font-medium mb-2">🧠 Erinnerst du dich?</p>
-            <p className="text-white/80">{reviewContent.question}</p>
+          {/* Question / Highlight */}
+          <div className={`rounded-xl p-6 border mb-6 ${
+            review.type === 'book'
+              ? 'bg-gradient-to-br from-amber-500/20 to-orange-500/20 border-amber-500/30'
+              : 'bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border-indigo-500/30'
+          }`}>
+            {review.type === 'book' ? (
+              <>
+                <div className="flex items-start gap-2 mb-3">
+                  <Quote className="w-5 h-5 text-amber-400 flex-shrink-0 mt-1" />
+                  <p className="text-lg font-medium">Was bedeutet dieses Highlight für dich?</p>
+                </div>
+                <blockquote className="pl-4 border-l-2 border-amber-500/50 text-white/80 italic">
+                  "{review.highlight_text}"
+                </blockquote>
+              </>
+            ) : (
+              <>
+                <p className="text-lg font-medium mb-2">🧠 Erinnerst du dich?</p>
+                <p className="text-white/80">{reviewContent.question}</p>
+              </>
+            )}
           </div>
 
           {/* Answer / Reveal Button */}
@@ -197,12 +245,16 @@ function ReviewCard({
 // ============================================
 
 function CompletionScreen({ 
-  reviewCount, 
+  reviews,
   onFinish 
 }: { 
-  reviewCount: number;
+  reviews: ReviewItem[];
   onFinish: () => void;
 }) {
+  const moduleCount = reviews.filter(r => r.type === 'module').length;
+  const bookCount = reviews.filter(r => r.type === 'book').length;
+  const totalCount = reviews.length;
+
   useEffect(() => {
     // Celebration confetti
     confetti({
@@ -229,11 +281,25 @@ function CompletionScreen({
       </motion.div>
 
       <h2 className="text-2xl font-bold mb-2">Reviews abgeschlossen! 🎉</h2>
-      <p className="text-white/60 mb-8">
-        Du hast {reviewCount} Konzept{reviewCount !== 1 ? 'e' : ''} wiederholt.
-        <br />
-        Dein Gehirn wird es dir danken!
+      <p className="text-white/60 mb-4">
+        Du hast {totalCount} Konzept{totalCount !== 1 ? 'e' : ''} wiederholt.
       </p>
+
+      {/* Breakdown */}
+      <div className="flex gap-4 mb-6">
+        {moduleCount > 0 && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-indigo-500/20 rounded-lg">
+            <RefreshCw className="w-4 h-4 text-indigo-400" />
+            <span className="text-sm">{moduleCount} Module</span>
+          </div>
+        )}
+        {bookCount > 0 && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/20 rounded-lg">
+            <BookOpen className="w-4 h-4 text-amber-400" />
+            <span className="text-sm">{bookCount} Buch-Highlights</span>
+          </div>
+        )}
+      </div>
 
       <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4 mb-8 max-w-sm">
         <p className="text-indigo-300 text-sm">
@@ -303,16 +369,18 @@ export default function ReviewPage() {
 
   const handleReviewComplete = async (quality: ReviewQuality) => {
     const qualityMap = { forgot: 0, hard: 3, good: 4, easy: 5 };
+    const currentReview = reviews[currentIndex];
     
     try {
-      // Update review in backend
+      // Update review in backend (includes type for book highlights)
       await fetch('/api/reviews', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          reviewId: reviews[currentIndex].id,
+          reviewId: currentReview.id,
           userId,
           quality: qualityMap[quality],
+          type: currentReview.type || 'module',
         }),
       });
     } catch (error) {
@@ -374,7 +442,7 @@ export default function ReviewPage() {
   if (isComplete) {
     return (
       <div className="min-h-screen bg-[#0f0f1a] text-white">
-        <CompletionScreen reviewCount={reviews.length} onFinish={handleFinish} />
+        <CompletionScreen reviews={reviews} onFinish={handleFinish} />
       </div>
     );
   }

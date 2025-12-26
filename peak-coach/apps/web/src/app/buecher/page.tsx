@@ -49,6 +49,223 @@ interface Highlight {
   created_at: string;
 }
 
+interface BookReflection {
+  rating: number;
+  insights: string[];
+  recommendation: string;
+}
+
+// ============================================
+// Book Reflection Flow (3 Erkenntnisse)
+// ============================================
+
+function BookReflectionFlow({
+  book,
+  highlightsCount,
+  onComplete,
+  onCancel,
+}: {
+  book: Book;
+  highlightsCount: number;
+  onComplete: (data: BookReflection) => void;
+  onCancel: () => void;
+}) {
+  const [step, setStep] = useState(1);
+  const [rating, setRating] = useState(0);
+  const [insights, setInsights] = useState(['', '', '']);
+  const [recommendation, setRecommendation] = useState('');
+
+  const updateInsight = (index: number, value: string) => {
+    const newInsights = [...insights];
+    newInsights[index] = value;
+    setInsights(newInsights);
+  };
+
+  const canProceed = () => {
+    if (step === 1) return rating > 0;
+    if (step === 2) return insights.filter(i => i.trim()).length >= 1;
+    if (step === 3) return true;
+    return false;
+  };
+
+  const handleNext = () => {
+    if (step < 3) {
+      setStep(step + 1);
+    } else {
+      onComplete({
+        rating,
+        insights: insights.filter(i => i.trim()),
+        recommendation,
+      });
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="p-5 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/30"
+    >
+      {/* Progress */}
+      <div className="flex items-center gap-2 mb-4">
+        {[1, 2, 3].map((s) => (
+          <div
+            key={s}
+            className={`flex-1 h-1.5 rounded-full ${
+              s <= step ? 'bg-emerald-500' : 'bg-white/10'
+            }`}
+          />
+        ))}
+      </div>
+
+      {/* Step 1: Rating */}
+      {step === 1 && (
+        <div>
+          <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+            <Star className="w-5 h-5 text-yellow-400" />
+            Buch-Bewertung
+          </h3>
+          <p className="text-white/60 text-sm mb-4">
+            Wie würdest du "{book.title}" bewerten?
+          </p>
+          <div className="flex justify-center gap-3 mb-4">
+            {[1, 2, 3, 4, 5].map((star) => (
+              <motion.button
+                key={star}
+                onClick={() => setRating(star)}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Star
+                  className={`w-10 h-10 ${
+                    star <= rating ? 'text-yellow-400 fill-yellow-400' : 'text-white/20'
+                  }`}
+                />
+              </motion.button>
+            ))}
+          </div>
+          {rating > 0 && (
+            <p className="text-center text-sm text-white/60">
+              {rating === 5 && '⭐ Meisterwerk!'}
+              {rating === 4 && '👍 Sehr gut!'}
+              {rating === 3 && '👌 Solide'}
+              {rating === 2 && '😐 Okay'}
+              {rating === 1 && '👎 Nicht empfohlen'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Step 2: 3 Erkenntnisse */}
+      {step === 2 && (
+        <div>
+          <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-indigo-400" />
+            Deine Top-Erkenntnisse
+          </h3>
+          <p className="text-white/60 text-sm mb-4">
+            Was waren die 3 wichtigsten Dinge, die du gelernt hast?
+          </p>
+          <div className="space-y-3">
+            {[0, 1, 2].map((index) => (
+              <div key={index} className="flex items-start gap-3">
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-indigo-500/30 flex items-center justify-center text-sm font-medium">
+                  {index + 1}
+                </span>
+                <input
+                  type="text"
+                  value={insights[index]}
+                  onChange={(e) => updateInsight(index, e.target.value)}
+                  placeholder={
+                    index === 0 ? 'Die wichtigste Erkenntnis...' :
+                    index === 1 ? 'Zweite Erkenntnis (optional)' :
+                    'Dritte Erkenntnis (optional)'
+                  }
+                  className="flex-1 p-3 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500/50 outline-none text-sm"
+                />
+              </div>
+            ))}
+          </div>
+          {highlightsCount > 0 && (
+            <p className="text-center text-xs text-white/40 mt-3">
+              💡 Du hast {highlightsCount} Highlights gespeichert - schau sie dir nochmal an!
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Step 3: Empfehlung */}
+      {step === 3 && (
+        <div>
+          <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+            <MessageSquare className="w-5 h-5 text-emerald-400" />
+            Empfehlung
+          </h3>
+          <p className="text-white/60 text-sm mb-4">
+            Für wen würdest du dieses Buch empfehlen?
+          </p>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {[
+              'Einsteiger',
+              'Fortgeschrittene',
+              'Experten',
+              'Jeden',
+              'Niemanden',
+            ].map((rec) => (
+              <button
+                key={rec}
+                onClick={() => setRecommendation(rec)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  recommendation === rec
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-white/5 hover:bg-white/10'
+                }`}
+              >
+                {rec}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={recommendation.length > 15 ? recommendation : ''}
+            onChange={(e) => setRecommendation(e.target.value)}
+            placeholder="Oder schreib deine eigene Empfehlung... (optional)"
+            rows={2}
+            className="w-full p-3 rounded-xl bg-white/5 border border-white/10 focus:border-emerald-500/50 outline-none text-sm resize-none"
+          />
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex gap-3 mt-6">
+        <button
+          onClick={step === 1 ? onCancel : () => setStep(step - 1)}
+          className="flex-1 py-3 rounded-xl bg-white/10 font-medium"
+        >
+          {step === 1 ? 'Abbrechen' : 'Zurück'}
+        </button>
+        <button
+          onClick={handleNext}
+          disabled={!canProceed()}
+          className={`flex-1 py-3 rounded-xl font-semibold flex items-center justify-center gap-2 ${
+            canProceed()
+              ? 'bg-emerald-500'
+              : 'bg-white/10 text-white/40 cursor-not-allowed'
+          }`}
+        >
+          {step === 3 ? (
+            <>
+              <CheckCircle className="w-5 h-5" />
+              Abschließen
+            </>
+          ) : (
+            'Weiter'
+          )}
+        </button>
+      </div>
+    </motion.div>
+  );
+}
+
 // ============================================
 // Add Book Modal
 // ============================================
@@ -435,7 +652,7 @@ function BookDetailView({
   onClose: () => void;
   onUpdateProgress: (page: number) => void;
   onAddHighlight: (highlight: Partial<Highlight>) => void;
-  onComplete: (rating: number) => void;
+  onComplete: (rating: number, insights?: string[], recommendation?: string) => void;
 }) {
   const [showAddHighlight, setShowAddHighlight] = useState(false);
   const [currentPage, setCurrentPage] = useState(book.current_page.toString());
@@ -521,28 +738,17 @@ function BookDetailView({
           </div>
         )}
 
-        {/* Complete Modal */}
+        {/* Complete Modal - Full Reflection Flow */}
         {showComplete && (
-          <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
-            <p className="font-medium mb-3">Wie bewertest du das Buch?</p>
-            <div className="flex justify-center gap-2 mb-4">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button key={star} onClick={() => setRating(star)}>
-                  <Star
-                    className={`w-8 h-8 ${
-                      star <= rating ? 'text-yellow-400 fill-yellow-400' : 'text-white/20'
-                    }`}
-                  />
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => { onComplete(rating); setShowComplete(false); }}
-              className="w-full py-3 rounded-xl bg-emerald-500 font-semibold"
-            >
-              Abschließen
-            </button>
-          </div>
+          <BookReflectionFlow
+            book={book}
+            highlightsCount={highlights.length}
+            onComplete={(reflectionData) => {
+              onComplete(reflectionData.rating, reflectionData.insights, reflectionData.recommendation);
+              setShowComplete(false);
+            }}
+            onCancel={() => setShowComplete(false)}
+          />
         )}
 
         {/* Highlights */}
@@ -703,10 +909,30 @@ export default function BuecherPage() {
     }
   };
 
-  const handleComplete = async (rating: number) => {
+  const handleComplete = async (rating: number, insights?: string[], recommendation?: string) => {
     if (!selectedBook) return;
 
     const supabase = createClient();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
+    
+    // Save book reflection to learning_activity for later reference
+    if (authUser && insights && insights.length > 0) {
+      await supabase.from('learning_activity').insert({
+        user_id: authUser.id,
+        activity_type: 'book_completed',
+        metadata: {
+          book_id: selectedBook.id,
+          book_title: selectedBook.title,
+          book_author: selectedBook.author,
+          rating,
+          insights,
+          recommendation,
+          highlights_count: highlights.length,
+        },
+        xp_earned: 50 + (insights.length * 10), // Bonus XP for reflections
+      });
+    }
+
     const { error } = await supabase
       .from('books')
       .update({ 
