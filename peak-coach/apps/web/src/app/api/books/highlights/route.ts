@@ -309,9 +309,9 @@ export async function DELETE(request: NextRequest) {
 }
 
 // ============================================
-// POST: KI-Analyse ob Highlight eine Action ist
+// Helper: KI-Analyse ob Highlight eine Action ist
 // ============================================
-export async function analyzeHighlight(highlightText: string): Promise<{
+async function analyzeHighlight(highlightText: string): Promise<{
   isAction: boolean;
   suggestedType: string;
   suggestedAction?: {
