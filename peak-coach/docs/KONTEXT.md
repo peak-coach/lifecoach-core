@@ -22,13 +22,16 @@ peak-coach/
 ├── apps/
 │   ├── web/                    # Next.js Web App
 │   │   ├── src/app/
-│   │   │   ├── akademie/       # Lern-Center
-│   │   │   ├── api/            # API Routes
+│   │   │   ├── akademie/       # Lern-Center (Dashboard + 8-Step Module)
+│   │   │   ├── aktionen/       # Unified Actions UI
+│   │   │   ├── buecher/        # Books Library + Highlights
+│   │   │   ├── api/            # API Routes (skills, actions, books, etc.)
 │   │   │   ├── goals/          # Ziele-Seite
 │   │   │   └── page.tsx        # Dashboard
-│   │   └── src/lib/
-│   │       ├── expertKnowledge.ts  # AI Wissens-Basis
-│   │       └── api.ts          # Supabase Client
+│   │   ├── src/lib/
+│   │   │   ├── expertKnowledge.ts  # AI Wissens-Basis
+│   │   │   └── api.ts          # Supabase Client
+│   │   └── src/__tests__/      # Vitest + Testing Library Tests
 │   └── telegram-bot/           # Telegram Bot
 │       └── src/services/
 │           └── expertKnowledge.ts
@@ -73,11 +76,27 @@ peak-coach/
 Rhetorik, Psychologie, Produktivität, Fitness, Muskelaufbau, TRT/Enhanced, Business, Finanzen, Lernen, Schlaf, Sprachen, KI, Prompting, Meditation, Kampfsport, Biohacking, Networking, Lesen, **Supplements**
 
 ## Letzte Änderungen
-- **NEU: Migration 015** - Skill Decomposition System (goal_skills, module_skill_mapping, skill_templates)
-- **NEU: Migration 016** - Unified Actions System (actions, action_reminders)
-- **NEU: Migration 017** - Books Library (books, book_highlights, book_reading_sessions)
+- **Phase 1-4 Complete:** Alle geplanten Features implementiert
+- **NEU: /aktionen** - Unified Actions UI mit Completion Tracking
+- **NEU: /buecher** - Books Library mit Highlights System
+- **NEU: Akademie Dashboard** - Tools Section mit Aktionen, Bücher, Diagnose, Skill-Tree
+- **NEU: Test Suite** - 89 Tests mit Vitest + React Testing Library
+- Migration 015 - Skill Decomposition System
+- Migration 016 - Unified Actions System
+- Migration 017 - Books Library
 - User-ID Bug in Akademie gefixt (authUser.id statt userData.id)
 - Supplements-Kategorie hinzugefügt
+
+## Test Suite
+- **Framework:** Vitest + React Testing Library
+- **Coverage:** API Tests + Component Tests
+- **Ausführen:** `cd peak-coach/apps/web && npm run test:run`
+- **Tests:**
+  - `api/generate-module.test.ts` - 8-Step Module Generation
+  - `api/skills.test.ts` - Skill Decomposition + Mastery
+  - `api/actions.test.ts` - Actions CRUD + Status Transitions
+  - `api/books.test.ts` - Books + Highlights + Spaced Repetition
+  - `components/lernen-page.test.tsx` - 8-Step UI Flow
 
 ## Bekannte Regeln (Memory)
 1. Bei DB-Interaktionen IMMER prüfen: Welche user_id braucht die Tabelle?
