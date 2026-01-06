@@ -32,6 +32,19 @@ import { rollVariableReward, VariableReward } from '@/lib/rewards';
 import { VariableRewardPopup } from '@/components/variable-reward';
 
 // ============================================
+// Helper: Safe URI Decoding
+// ============================================
+function safeDecodeURIComponent(str: string): string {
+  try {
+    return decodeURIComponent(str);
+  } catch (e) {
+    // If decoding fails, return original string
+    console.warn('Failed to decode URI component:', str);
+    return str;
+  }
+}
+
+// ============================================
 // Types - Neue 8-Step Struktur
 // ============================================
 
@@ -1661,7 +1674,7 @@ function LernenPageContent() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            goalTitle: decodeURIComponent(goalTitle),
+            goalTitle: safeDecodeURIComponent(goalTitle),
             category,
             goalId,
             skillId,
@@ -1782,7 +1795,7 @@ function LernenPageContent() {
             metadata: {
               goalId,
               skillId,
-              goalTitle: decodeURIComponent(goalTitle),
+              goalTitle: safeDecodeURIComponent(goalTitle),
               goalCategory: category,
               quizScore,
               confidenceData,
@@ -1909,7 +1922,7 @@ function LernenPageContent() {
         </motion.div>
         <h2 className="text-xl font-bold mb-2">Erstelle dein Lernmodul...</h2>
         <p className="text-white/60">
-          Personalisiert für: <span className="text-indigo-400">{decodeURIComponent(goalTitle)}</span>
+          Personalisiert für: <span className="text-indigo-400">{safeDecodeURIComponent(goalTitle)}</span>
         </p>
         {retryCount > 0 && (
           <p className="text-indigo-400 text-sm mt-2">
@@ -1942,7 +1955,7 @@ function LernenPageContent() {
         </header>
         <main className="flex-1 overflow-hidden">
           <DiagnosisStep
-            goalTitle={decodeURIComponent(goalTitle)}
+            goalTitle={safeDecodeURIComponent(goalTitle)}
             category={category}
             onComplete={handleDiagnosisComplete}
           />
@@ -1988,7 +2001,7 @@ function LernenPageContent() {
             <WhyStep 
               key="why"
               content={module.content.why}
-              goalTitle={decodeURIComponent(goalTitle)}
+              goalTitle={safeDecodeURIComponent(goalTitle)}
               onNext={goToNext} 
             />
           )}
