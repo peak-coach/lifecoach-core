@@ -10,7 +10,11 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "test:env": "vitest run --grep 'Environment'",
+    "test:integration": "vitest run --grep 'Integration'",
+    "pre-deploy": "npx ts-node scripts/pre-deploy-check.ts",
+    "health-check": "curl -s http://localhost:3000/api/health?full=true | npx json"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.0.5",
