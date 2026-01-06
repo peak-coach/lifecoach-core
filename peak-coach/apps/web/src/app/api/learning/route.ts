@@ -303,21 +303,95 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Grant XP (if function exists)
+    // Grant XP
+    const xpAmount = activityType === 'module_completed' ? 50 : 20;
+    let xpGranted = false;
+    
     try {
-      await supabase.rpc('add_xp', { 
+      // Try RPC function first
+      const { error: rpcError } = await supabase.rpc('add_xp', { 
         p_user_id: userId, 
-        p_xp_amount: activityType === 'module_completed' ? 50 : 20 
+        p_xp_amount: xpAmount 
       });
+      
+      if (rpcError) {
+        console.log('[Learning API] RPC add_xp failed, using fallback:', rpcError.message);
+        throw rpcError;
+      }
+      xpGranted = true;
+      console.log('[Learning API] XP granted via RPC:', xpAmount);
     } catch (xpError) {
-      console.log('XP function not available:', xpError);
+      // Fallback: Direct table update
+      try {
+        // Ensure user_gamification exists
+        await supabase
+          .from('user_gamification')
+          .upsert({
+            user_id: userId,
+            total_xp: 0,
+            current_level: 1,
+          }, { onConflict: 'user_id', ignoreDuplicates: true });
+        
+        // Get current XP
+        const { data: gamification } = await supabase
+          .from('user_gamification')
+          .select('total_xp, current_level')
+          .eq('user_id', userId)
+          .single();
+        
+        const currentXP = gamification?.total_xp || 0;
+        const newXP = currentXP + xpAmount;
+        
+        // Calculate level
+        const newLevel = newXP >= 12000 ? 10 :
+                        newXP >= 8000 ? 9 :
+                        newXP >= 5500 ? 8 :
+                        newXP >= 3500 ? 7 :
+                        newXP >= 2000 ? 6 :
+                        newXP >= 1000 ? 5 :
+                        newXP >= 500 ? 4 :
+                        newXP >= 250 ? 3 :
+                        newXP >= 100 ? 2 : 1;
+        
+        // Update gamification
+        await supabase
+          .from('user_gamification')
+          .update({
+            total_xp: newXP,
+            current_level: newLevel,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', userId);
+        
+        // Log XP event
+        await supabase
+          .from('xp_events')
+          .insert({
+            user_id: userId,
+            event_type: activityType,
+            xp_amount: xpAmount,
+            description: `${activityType}: ${metadata?.moduleTitle || 'Learning'}`,
+          });
+        
+        // Also update learning_settings.total_xp
+        await supabase
+          .from('learning_settings')
+          .update({ total_xp: newXP })
+          .eq('user_id', userId);
+        
+        xpGranted = true;
+        console.log('[Learning API] XP granted via fallback:', xpAmount, 'New total:', newXP);
+      } catch (fallbackError) {
+        console.error('[Learning API] XP fallback also failed:', fallbackError);
+      }
     }
 
     return NextResponse.json({
       success: true,
       activity,
       streak: streakResult,
-      xpEarned: activityType === 'module_completed' ? 50 : 20,
+      xpEarned: xpAmount,
+      xpGranted,
     });
   } catch (error) {
     console.error('Learning POST error:', error);

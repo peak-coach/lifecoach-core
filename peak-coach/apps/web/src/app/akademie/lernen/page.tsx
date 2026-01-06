@@ -1824,22 +1824,34 @@ function LernenPageContent() {
 
         // Create action in unified actions system (NEU)
         if (actionData) {
-          await fetch('/api/actions', {
+          const actionResponse = await fetch('/api/actions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               userId: authUser.id,
-              source_type: 'module',
-              source_id: module?.id,
-              source_title: module?.title,
-              action_description: module?.content.action.task,
-              trigger_situation: actionData.trigger,
-              intended_behavior: actionData.behavior,
-              timing_type: actionData.timing === 'bei Gelegenheit' ? 'opportunity' : 
+              sourceType: 'module',
+              sourceId: module?.id,
+              sourceTitle: module?.title,
+              goalId: goalId,
+              skillId: skillId,
+              actionTitle: module?.content.action.task || 'Lernaufgabe anwenden',
+              actionDescription: module?.content.action.implementationIntention?.formatted || module?.content.action.task,
+              triggerSituation: actionData.trigger,
+              intendedBehavior: actionData.behavior,
+              successMetric: module?.content.action.metric,
+              timingType: actionData.timing === 'bei Gelegenheit' ? 'opportunity' : 
                           actionData.timing === 'heute' ? 'specific' :
                           actionData.timing === 'morgen' ? 'specific' : 'weekly',
+              dueDate: actionData.timing === 'heute' ? new Date().toISOString().split('T')[0] :
+                       actionData.timing === 'morgen' ? new Date(Date.now() + 86400000).toISOString().split('T')[0] : null,
             }),
           });
+          
+          if (!actionResponse.ok) {
+            console.error('[Module Complete] Failed to create action:', await actionResponse.text());
+          } else {
+            console.log('[Module Complete] Action created successfully');
+          }
         }
       }
     } catch (err) {
