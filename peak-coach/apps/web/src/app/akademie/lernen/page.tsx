@@ -1502,12 +1502,16 @@ function CompleteStep({
   module, 
   quizScore, 
   totalQuestions,
-  onFinish 
+  onFinish,
+  onNextModule,
+  hasMoreModules,
 }: { 
   module: Module;
   quizScore: number;
   totalQuestions: number;
   onFinish: () => void;
+  onNextModule?: () => void;
+  hasMoreModules?: boolean;
 }) {
   const percentage = Math.round((quizScore / totalQuestions) * 100);
 
@@ -1562,6 +1566,15 @@ function CompleteStep({
             Modul {module.moduleNumber} von {module.totalModules}
           </span>
         </div>
+        {/* Progress Bar */}
+        <div className="mt-2 h-1.5 bg-white/10 rounded-full overflow-hidden">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${(module.moduleNumber / module.totalModules) * 100}%` }}
+            transition={{ duration: 0.8, delay: 0.5 }}
+            className="h-full bg-indigo-500 rounded-full"
+          />
+        </div>
       </div>
 
       <div className="flex items-center gap-4 mb-8">
@@ -1571,15 +1584,34 @@ function CompleteStep({
         </div>
       </div>
 
-      <motion.button
-        onClick={onFinish}
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.98 }}
-        className="w-full max-w-sm py-4 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl font-semibold flex items-center justify-center gap-2"
-      >
-        Zurück zur Akademie
-        <ArrowRight className="w-5 h-5" />
-      </motion.button>
+      <div className="flex flex-col gap-3 w-full max-w-sm">
+        {/* Nächstes Modul Button - nur wenn es mehr Module gibt */}
+        {hasMoreModules && onNextModule && (
+          <motion.button
+            onClick={onNextModule}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full py-4 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl font-semibold flex items-center justify-center gap-2"
+          >
+            Nächstes Modul starten
+            <ArrowRight className="w-5 h-5" />
+          </motion.button>
+        )}
+        
+        <motion.button
+          onClick={onFinish}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          className={`w-full py-4 rounded-xl font-semibold flex items-center justify-center gap-2 ${
+            hasMoreModules 
+              ? 'bg-white/10 hover:bg-white/20 text-white/80' 
+              : 'bg-gradient-to-r from-indigo-500 to-purple-600'
+          }`}
+        >
+          {hasMoreModules ? 'Pause machen' : 'Zurück zur Akademie'}
+          {!hasMoreModules && <ArrowRight className="w-5 h-5" />}
+        </motion.button>
+      </div>
     </motion.div>
   );
 }
@@ -1728,8 +1760,18 @@ function LernenPageContent() {
       const { data: { user: authUser } } = await supabase.auth.getUser();
 
       if (authUser?.id) {
+        // WICHTIG: Verwende moduleNum (aus URL) statt module.moduleNumber
+        // Das stellt sicher, dass der Progress korrekt inkrementiert wird
+        const currentModuleNumber = moduleNum;
+        
+        console.log('[Module Complete] Saving progress:', {
+          goalId,
+          moduleNumber: currentModuleNumber,
+          moduleTitle: module?.title,
+        });
+
         // Log learning activity
-        await fetch('/api/learning', {
+        const learningResponse = await fetch('/api/learning', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1746,10 +1788,16 @@ function LernenPageContent() {
               confidenceData,
               userExplanation,
               moduleTitle: module?.title,
-              moduleNumber: module?.moduleNumber,
+              moduleNumber: currentModuleNumber, // Verwende URL-Parameter
             },
           }),
         });
+        
+        if (!learningResponse.ok) {
+          console.error('[Module Complete] Failed to save progress:', await learningResponse.text());
+        } else {
+          console.log('[Module Complete] Progress saved successfully. Next module:', currentModuleNumber + 1);
+        }
 
         // Create spaced repetition review item
         const reviewQuestions = module?.content.reviewQuestions?.map(q => ({
@@ -1801,6 +1849,20 @@ function LernenPageContent() {
 
   const handleFinish = () => {
     router.push('/akademie');
+  };
+
+  // Nächstes Modul starten
+  const handleNextModule = () => {
+    const nextModuleNum = moduleNum + 1;
+    const params = new URLSearchParams({
+      goalId: goalId || '',
+      goalTitle: goalTitle,
+      category: category,
+      moduleNumber: nextModuleNum.toString(),
+    });
+    if (skillId) params.set('skillId', skillId);
+    
+    router.push(`/akademie/lernen?${params.toString()}`);
   };
 
   const handleRetry = () => {
@@ -1977,7 +2039,9 @@ function LernenPageContent() {
               module={module}
               quizScore={quizScore}
               totalQuestions={module.content.test.length}
-              onFinish={handleFinish} 
+              onFinish={handleFinish}
+              onNextModule={handleNextModule}
+              hasMoreModules={moduleNum < (module.totalModules || 5)}
             />
           )}
         </AnimatePresence>

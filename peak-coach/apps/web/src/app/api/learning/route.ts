@@ -198,12 +198,20 @@ export async function POST(request: NextRequest) {
       const quizScore = metadata?.quizScore || 0;
       const actionTask = metadata?.actionTask;
       
+      console.log('[Learning API] Module completed:', {
+        userId,
+        goalId,
+        moduleNumber,
+        moduleTitle: metadata?.moduleTitle,
+        nextModule: moduleNumber + 1,
+      });
+      
       // 1. Schedule spaced repetition review
       if (moduleId) {
         const nextReview = new Date();
         nextReview.setDate(nextReview.getDate() + 1); // First review tomorrow
 
-        await supabase
+        const { error: srError } = await supabase
           .from('spaced_repetition')
           .upsert({
             user_id: userId,
@@ -216,20 +224,28 @@ export async function POST(request: NextRequest) {
           }, {
             onConflict: 'user_id,module_id',
           });
+        
+        if (srError) {
+          console.error('[Learning API] Spaced repetition error:', srError);
+        }
       }
       
       // 2. Update goal learning progress
       if (goalId) {
-        const { data: existingProgress } = await supabase
+        const { data: existingProgress, error: fetchError } = await supabase
           .from('goal_learning_progress')
           .select('*')
           .eq('user_id', userId)
           .eq('goal_id', goalId)
           .single();
         
+        if (fetchError && fetchError.code !== 'PGRST116') {
+          console.error('[Learning API] Error fetching progress:', fetchError);
+        }
+        
         if (existingProgress) {
           // Update existing progress
-          await supabase
+          const { error: updateError } = await supabase
             .from('goal_learning_progress')
             .update({
               current_module: moduleNumber + 1,
@@ -240,9 +256,15 @@ export async function POST(request: NextRequest) {
             })
             .eq('user_id', userId)
             .eq('goal_id', goalId);
+          
+          if (updateError) {
+            console.error('[Learning API] Error updating progress:', updateError);
+          } else {
+            console.log('[Learning API] Progress updated: current_module =', moduleNumber + 1);
+          }
         } else {
           // Create new progress
-          await supabase
+          const { error: insertError } = await supabase
             .from('goal_learning_progress')
             .insert({
               user_id: userId,
@@ -252,7 +274,15 @@ export async function POST(request: NextRequest) {
               last_quiz_score: quizScore,
               total_modules_completed: 1,
             });
+          
+          if (insertError) {
+            console.error('[Learning API] Error inserting progress:', insertError);
+          } else {
+            console.log('[Learning API] Progress created: current_module =', moduleNumber + 1);
+          }
         }
+      } else {
+        console.warn('[Learning API] WARNING: No goalId provided - progress will NOT be saved!');
       }
       
       // 3. Create action follow-up for transfer tracking
