@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+
+# Pre-commit Hook für Peak-Coach
+# Prüft Code-Qualität vor jedem Commit
+
+echo "🔍 Running pre-commit checks..."
+
+# Lint-staged für inkrementelle Prüfungen
+npx lint-staged
+
+echo "✅ Pre-commit checks complete!"

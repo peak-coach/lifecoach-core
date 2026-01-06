@@ -1,0 +1,22 @@
+{
+  "name": "lifecoach-core",
+  "private": true,
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "test:web": "cd peak-coach/apps/web && npm run test:run",
+    "lint:web": "cd peak-coach/apps/web && npm run lint",
+    "typecheck:web": "cd peak-coach/apps/web && npx tsc --noEmit --skipLibCheck"
+  },
+  "lint-staged": {
+    "peak-coach/apps/web/src/**/*.{ts,tsx}": [
+      "npx eslint --fix --max-warnings 0"
+    ],
+    "peak-coach/apps/web/src/**/*.{ts,tsx,json}": [
+      "npx prettier --write --ignore-unknown"
+    ]
+  }
+}
